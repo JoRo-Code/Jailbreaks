@@ -29,11 +29,48 @@ uv pip install -r requirements.txt
 ```
 
 4. Set up MLflow tracking:
-```bash
+```sh
 mlflow server --backend-store-uri sqlite:///mlflow.db --default-artifact-root ./mlruns
 ```
+5. Secrets
+populate `.env` with your `HUGGINGFACE_HUB_TOKEN`
+```sh
+export $(cat .env | xargs)
+```
+6. Head to Hugging Face and get access to downloading models
+e.g. [meta-llama/Llama-2-7b](https://huggingface.co/meta-llama/Llama-2-7b)
 
 ## Usage
+
+### Running the Pipeline
+
+The easiest way to run the pipeline is using the provided shell script:
+
+```bash
+# Make the script executable
+chmod +x run_pipeline.sh
+
+# Run with default settings
+./run_pipeline.sh
+
+# See all available options
+./run_pipeline.sh --help
+```
+
+This script will:
+1. Start an MLflow server on the specified port
+2. Run the evaluation pipeline with your settings
+3. Keep the MLflow server running so you can explore results
+
+You can customize the run with various options:
+
+```bash
+# Evaluate specific methods on a custom model
+./run_pipeline.sh --model gpt2 --methods gcg,token_aware --experiment custom-test
+
+# Run with detailed debug logging
+./run_pipeline.sh --log-level DEBUG
+```
 
 ### Basic Pipeline Configuration
 
@@ -131,8 +168,9 @@ class YourBenchmark:
 Results are tracked in MLflow and can be visualized through the MLflow UI:
 
 ```bash
-mlflow ui
+mlflow ui --port 5000
 ```
+You can adjust the port accordingly.
 
 Navigate to http://localhost:5000 to explore experiment results.
 
