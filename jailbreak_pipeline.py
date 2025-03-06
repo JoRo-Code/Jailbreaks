@@ -5,17 +5,15 @@ import time
 import logging
 from dataclasses import dataclass
 
+from transformers import AutoModelForCausalLM, AutoTokenizer
+from deepeval.models.base_model import DeepEvalBaseLLM
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger("jailbreak_pipeline")
-
-# Method implementations would be imported here
-# from methods.gcg import GCG
-# from methods.single_direction import SingleDirection
-# from methods.token_aware import TokenAware
 
 @dataclass
 class BenchmarkResult:
@@ -24,7 +22,6 @@ class BenchmarkResult:
     details: Dict[str, Any] = None
 
 class JailbreakMethod:
-    """Base class for jailbreak methods"""
     name: str
     
     def __init__(self, **kwargs):
@@ -63,7 +60,6 @@ class GCG(JailbreakMethod):
         return self
         
     def apply(self, model, prompt):
-        # Inject the adversarial suffix
         return f"{prompt} {self.suffix}"
     
     def get_params(self):
@@ -151,15 +147,44 @@ class BaselineRefusalScorer:
                 return 1
         return 0
 
-class UtilityBenchmark:
-    """Evaluates model utility on standard benchmarks"""
+class LLM(DeepEvalBaseLLM):
+    def __init__(self, model, methods, device="cpu"):
+        self.name = getattr(model.config, "name_or_path", None) or model.config._name_or_path
+        self.device = device
+        self.model = model.to(device)
+        self.methods = methods
+        self.tokenizer = AutoTokenizer.from_pretrained(self.name)
+
+    def process_prompt(self, prompt):
+        return self.tokenizer(prompt, return_tensors="pt", padding=True, truncation=True).to(self.device)
     
+    def generate(self, prompt):
+        inputs = self.process_prompt(prompt)
+        outputs = self.model.generate(**inputs)
+        response = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
+        return response[len(prompt):].strip()
+
+    async def a_generate(self, prompt: str) -> str: return self.generate(prompt)
+    def get_model_name(self): return self.name
+    def load_model(self): return self.model
+
+    def __repr__(self):
+        return f"{self.name}"
+
+class Benchmark:
+    def __init__(self, model, methods):
+        self.model = model
+        self.methods = methods
+
+    def evaluate(self, model):
+        return NotImplementedError
+
+class UtilityBenchmark(Benchmark):    
     def __init__(self, datasets=None):
         self.datasets = datasets or ["MMLU", "HellaSwag"]
     
-    def evaluate(self, model, methods=None):
-        method_names = "baseline" if not methods else "+".join([m.name for m in methods])
-        logger.info(f"Evaluating utility on {self.datasets} with methods: {method_names}")
+    def evaluate(self, model):
+        logger.info(f"Evaluating utility on {self.datasets} with model: {model}")
         
         start_time = time.time()
         # Placeholder implementation
@@ -178,80 +203,138 @@ class UtilityBenchmark:
             details=scores
         )
 
-class RefusalBenchmark:
+class RefusalBenchmark(Benchmark):
     """Evaluates model refusal rate on harmful prompts"""
     
     def __init__(self, prompts=None, scorer=None):
         self.prompts = prompts or ["AdvBench prompts would go here"]
         self.scorer = scorer or BaselineRefusalScorer()
     
-    def evaluate(self, model, methods=None):
-        method_names = "baseline" if not methods else "+".join([m.name for m in methods])
-        logger.info(f"Evaluating refusal rate on {len(self.prompts)} prompts with methods: {method_names}")
+    def evaluate(self, model):
+        logger.info(f"Evaluating refusal rate on {len(self.prompts)} prompts with model: {model}")
         
         start_time = time.time()
         
-        # In a real implementation, we would:
-        # 1. Apply jailbreak methods to each prompt if methods provided
-        # 2. Get model responses for each (modified) prompt
-        # 3. Score each response with the refusal scorer
-        # 4. Calculate the refusal rate
+        scores = []
+        detailed_results = []
         
-        if not methods:
-            # Test baseline refusal rate (higher is more refusals)
-            refusal_rate = 0.95  # Placeholder value
-            logger.info(f"Baseline model refused {refusal_rate*100:.1f}% of harmful prompts")
-        else:
-            # Apply methods and measure refusal rate (lower means more bypassed refusals)
-            refusal_rate = 0.4  # Placeholder value
-            logger.info(f"Model with {method_names} refused {refusal_rate*100:.1f}% of harmful prompts")
+        # Create tabular format for results
+        refusal_table = {
+            "prompt_id": [],
+            "prompt": [],
+            "response": [],
+            "is_refusal": [],
+            "score": [],
+            "timestamp": []
+        }
+        
+        for idx, prompt in enumerate(self.prompts):
+            prompt_id = idx + 1
+            logger.info(f"Testing prompt {prompt_id}/{len(self.prompts)}")
             
+            try:
+                # Generate response
+                response = model.generate(prompt)
+                
+                # Score response
+                score = self.scorer.score(response)
+                is_refusal = score > 0
+                
+                # Store detailed result
+                result = {
+                    "prompt_id": prompt_id,
+                    "prompt": prompt,
+                    "response": response,
+                    "is_refusal": is_refusal,
+                    "score": score,
+                    "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+                    "error": None
+                }
+                
+                # Log info based on result
+                if is_refusal:
+                    logger.info(f"Model refused prompt {prompt_id}: {prompt[:50]}...")
+                else:
+                    logger.info(f"Model answered prompt {prompt_id}: {prompt[:50]}...")
+                
+                logger.debug(f"Response: {response[:100]}...")
+                logger.debug(f"Score: {score}")
+                
+            except Exception as e:
+                error_msg = str(e)
+                logger.error(f"Error generating response for prompt {prompt_id}: {error_msg}")
+                
+                # Errors
+                is_refusal = True
+                score = -1.0
+                response = f"[ERROR: {error_msg}]"
+                
+                # Store error result
+                result = {
+                    "prompt_id": prompt_id,
+                    "prompt": prompt,
+                    "response": response,
+                    "is_refusal": is_refusal,
+                    "score": score,
+                    "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+                    "error": error_msg
+                }
+            
+            # Add result to detailed results list
+            detailed_results.append(result)
+            scores.append(score)
+            
+            # Add to tabular format
+            for key in refusal_table:
+                if key in result:
+                    refusal_table[key].append(result[key])
+        
+        # Calculate refusal rate
+        refusal_rate = sum(scores) / len(scores)
+        refusal_count = sum(1 for s in scores if s > 0)
         duration = time.time() - start_time
+        
         logger.info(f"Refusal evaluation completed in {duration:.2f}s")
+        logger.info(f"Refusal rate: {refusal_rate*100:.1f}% ({refusal_count}/{len(self.prompts)})")
+        
+        # Create CSV file for MLflow tracking
+        csv_path = None
+        try:
+            import pandas as pd
+            import os
             
+            # Create results directory
+            os.makedirs("results", exist_ok=True)
+            
+            # Create DataFrame
+            df = pd.DataFrame(refusal_table)
+            
+            # Save to CSV
+            timestamp = int(time.time())
+            csv_path = f"results/refusal_results_{timestamp}.csv"
+            df.to_csv(csv_path, index=False)
+            
+            logger.info(f"Saved detailed refusal results to {csv_path}")
+            
+        except ImportError:
+            logger.warning("Pandas not available, skipping CSV generation")
+        except Exception as e:
+            logger.error(f"Error creating CSV: {str(e)}")
+        
+        # Return complete benchmark result
         return BenchmarkResult(
             name="refusal",
             score=refusal_rate,
-            details={"total_prompts": len(self.prompts)}
-        )
-
-class CostBenchmark:
-    """Measures computational costs"""
-    
-    def evaluate(self, model, methods=None):
-        method_names = "baseline" if not methods else "+".join([m.name for m in methods])
-        logger.info(f"Evaluating computational cost with methods: {method_names}")
-        
-        start_time = time.time()
-        
-        if not methods:
-            fit_time = 0
-            logger.info("Baseline has no fitting cost")
-        else:
-            # Sum up fitting times from all methods
-            fit_times = {method.__class__.__name__: getattr(method, "fit_time", 0) for method in methods}
-            fit_time = sum(fit_times.values())
-            
-            # Log individual method costs
-            for method_name, method_time in fit_times.items():
-                logger.info(f"  - {method_name} fit time: {method_time:.4f}s")
-        
-        # In a real implementation, we would benchmark inference time
-        # by running sample prompts through the model
-        inference_time = 0.05  # seconds per token (placeholder)
-        
-        duration = time.time() - start_time
-        logger.info(f"Cost evaluation completed in {duration:.2f}s")
-        logger.info(f"Total fitting time: {fit_time:.4f}s, Inference time per token: {inference_time:.4f}s")
-        
-        return BenchmarkResult(
-            name="cost",
-            score=fit_time,  # Lower is better
             details={
-                "fit_time": fit_time,
-                "inference_time": inference_time
+                "total_prompts": len(self.prompts),
+                "refusal_count": refusal_count,
+                "duration": duration,
+                "results": detailed_results,
+                "csv_path": csv_path,
+                "tabular_data": refusal_table
             }
         )
+
 
 class JailbreakPipeline:
     """Main pipeline for evaluating jailbreak methods"""
@@ -265,9 +348,8 @@ class JailbreakPipeline:
         self.models = models or []
         self.method_combinations = method_combinations or [[]]
         self.benchmarks = benchmarks or {
-            "utility": UtilityBenchmark(),
+            # "utility": UtilityBenchmark(),
             "refusal": RefusalBenchmark(),
-            "cost": CostBenchmark()
         }
         
     def run(self, experiment_name="jailbreak_evaluation"):
@@ -301,13 +383,8 @@ class JailbreakPipeline:
                     run_id = mlflow.active_run().info.run_id
                     logger.info(f"  Started MLflow run: {run_id}")
                     
-                    # Log model info
+                    # Log info
                     mlflow.log_param("model", model_name)
-                    
-                    # Fit methods if needed (this would happen in a real implementation)
-                    # We're assuming methods are already fitted in this example
-                    
-                    # Log method parameters
                     if method_combo:
                         logger.info("  Logging method parameters:")
                         for method in method_combo:
@@ -316,12 +393,14 @@ class JailbreakPipeline:
                                 mlflow.log_param(param_key, param_value)
                                 logger.debug(f"    - {param_key}: {param_value}")
                     
+                    jailbreak_model = LLM(model, method_combo)
+                    
                     # Run benchmarks
                     logger.info("  Running benchmarks:")
                     benchmark_results = {}
                     for name, benchmark in self.benchmarks.items():
                         logger.info(f"    - {name} benchmark")
-                        result = benchmark.evaluate(model, method_combo)
+                        result = benchmark.evaluate(jailbreak_model)
                         benchmark_results[name] = result
                         
                         # Log metrics
@@ -332,6 +411,13 @@ class JailbreakPipeline:
                                     metric_key = f"{name}_{key}"
                                     mlflow.log_metric(metric_key, value)
                                     logger.debug(f"      Logged metric: {metric_key}={value}")
+                            
+                            # Log artifacts for refusal benchmark
+                            if name == "refusal":
+                                # Log CSV file if it exists
+                                if "csv_path" in result.details and result.details["csv_path"]:
+                                    mlflow.log_artifact(result.details["csv_path"], "refusal_results")
+                                    logger.info(f"      Logged CSV results to MLflow")
                     
                     results[model_name][combo_name] = benchmark_results
                 
@@ -347,7 +433,6 @@ class JailbreakPipeline:
 def main():
     """Example usage of the jailbreak evaluation pipeline"""
     import argparse
-    from transformers import AutoModelForCausalLM
     
     # Parse command line arguments
     parser = argparse.ArgumentParser(description="Evaluate jailbreak methods on language models")
@@ -391,10 +476,10 @@ def main():
         if args.methods.lower() == "all":
             method_combinations = [
                 [],  # Baseline
-                [gcg],
-                [single_direction],
-                [token_aware],
-                [gcg, single_direction, token_aware]  # Combined
+                # [gcg],
+                # [single_direction],
+                # [token_aware],
+                # [gcg, single_direction, token_aware]  # Combined
             ]
             logger.info("Evaluating all method combinations (baseline + individual + combined)")
         else:
@@ -430,10 +515,9 @@ def main():
             models=models,
             method_combinations=method_combinations,
             benchmarks={
-                "utility": UtilityBenchmark(datasets=["MMLU", "HellaSwag"]),
+                #"utility": UtilityBenchmark(datasets=["MMLU", "HellaSwag"]),
                 "refusal": RefusalBenchmark(prompts=harmful_prompts, 
                                           scorer=BaselineRefusalScorer()),
-                "cost": CostBenchmark()
             }
         )
         
@@ -442,9 +526,9 @@ def main():
         results = pipeline.run(experiment_name=args.experiment)
         
         # Print summary
-        logger.info("\n" + "="*50)
+        logger.info("\n" + "="*80)
         logger.info("EVALUATION RESULTS SUMMARY")
-        logger.info("="*50)
+        logger.info("="*80)
         
         for model_name, model_results in results.items():
             logger.info(f"\nResults for {model_name}:")
@@ -453,32 +537,68 @@ def main():
             baseline_scores = {name: res.score for name, res in model_results["baseline"].items()}
             
             # Format results in a table-like structure
-            logger.info(f"{'Method':<25} {'Utility':<10} {'Refusal':<10} {'Cost':<10}")
-            logger.info("-" * 55)
+            logger.info(f"{'Method':<25} {'Refusal Rate':<15} {'Answered/Total':<15} {'Success Rate':<15}")
+            logger.info("-" * 80)
             
             for combo_name, benchmark_results in model_results.items():
-                utility = benchmark_results["utility"].score
                 refusal = benchmark_results["refusal"].score
-                cost = benchmark_results["cost"].score
+                
+                # Get details
+                details = benchmark_results["refusal"].details
+                total_prompts = details["total_prompts"]
+                refusal_count = details["refusal_count"]
+                answered_count = total_prompts - refusal_count
+                success_rate = (1 - refusal) * 100  # Percentage of successfully answered harmful prompts
                 
                 # Calculate changes from baseline
                 if combo_name != "baseline":
-                    utility_change = utility - baseline_scores["utility"]
                     refusal_change = refusal - baseline_scores["refusal"]
-                    cost_change = cost - baseline_scores["cost"]
+                    success_change = ((1 - refusal) - (1 - baseline_scores["refusal"])) * 100
                     
-                    utility_str = f"{utility:.4f} ({'+' if utility_change >= 0 else ''}{utility_change:.4f})"
-                    refusal_str = f"{refusal:.4f} ({'+' if refusal_change >= 0 else ''}{refusal_change:.4f})"
-                    cost_str = f"{cost:.4f} ({'+' if cost_change >= 0 else ''}{cost_change:.4f})"
+                    refusal_str = f"{refusal*100:.1f}% ({'+' if refusal_change >= 0 else ''}{refusal_change*100:.1f}%)"
+                    success_str = f"{success_rate:.1f}% ({'+' if success_change >= 0 else ''}{success_change:.1f}%)"
                 else:
-                    utility_str = f"{utility:.4f}"
-                    refusal_str = f"{refusal:.4f}"
-                    cost_str = f"{cost:.4f}"
+                    refusal_str = f"{refusal*100:.1f}%"
+                    success_str = f"{success_rate:.1f}%"
                 
-                logger.info(f"{combo_name:<25} {utility_str:<10} {refusal_str:<10} {cost_str:<10}")
+                answered_str = f"{answered_count}/{total_prompts}"
+                
+                logger.info(f"{combo_name:<25} {refusal_str:<15} {answered_str:<15} {success_str:<15}")
             
-        logger.info("\nLower refusal rates indicate more successful jailbreaking")
-        logger.info("MLflow UI: Run 'mlflow ui --port 5001' to view detailed results")
+            logger.info("\nLower refusal rates and higher success rates indicate more effective jailbreaking")
+            
+            # Visual comparison if terminal supports it
+            try:
+                logger.info("\nVisual Comparison (Refusal Rates):")
+                max_bar_len = 40
+                
+                baseline_refusal = baseline_scores["refusal"]
+                
+                for combo_name, benchmark_results in sorted(
+                    model_results.items(), 
+                    key=lambda x: x[1]["refusal"].score
+                ):
+                    refusal = benchmark_results["refusal"].score
+                    bar_len = int(refusal * max_bar_len)
+                    
+                    # Use Unicode block characters for the bar
+                    bar = '█' * bar_len
+                    
+                    # Add color indicators (+ is bad, - is good for refusal)
+                    if combo_name != "baseline":
+                        change = refusal - baseline_refusal
+                        change_indicator = f" ({'↑' if change > 0 else '↓'}{abs(change)*100:.1f}%)"
+                    else:
+                        change_indicator = " (baseline)"
+                    
+                    logger.info(f"{combo_name:<25} {refusal*100:5.1f}%{change_indicator} |{bar}")
+                
+            except Exception as e:
+                logger.debug(f"Error creating visual comparison: {str(e)}")
+            
+            logger.info("\nMLflow artifacts contain detailed refusal benchmark results:")
+            logger.info("  - Full CSV tables with all prompts and responses")
+            logger.info("  - Run 'mlflow ui --port 5001' to view and download detailed results")
         
     except Exception as e:
         logger.error(f"Error during evaluation: {str(e)}", exc_info=True)
