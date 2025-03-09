@@ -2,9 +2,9 @@
 
 This repository contains a modular pipeline for evaluating different jailbreaking methods on language models. The pipeline is designed to benchmark various methods individually and in combination, tracking metrics for:
 
-1. **Utility** - How well the model retains its capabilities on standard benchmarks
-2. **Refusal** - How resistant the model is to answering harmful prompts
-3. **Cost** - Computational expense in both fitting and inference time
+1. **Refusal** - How resistant the model is to answering harmful prompts
+<!-- 2. **Utility** - How well the model retains its capabilities on standard benchmarks -->
+<!-- 3. **Cost** - Computational expense in both fitting and inference time -->
 
 ## Setup
 
@@ -32,16 +32,20 @@ uv pip install -r requirements.txt
 ```sh
 mlflow server --backend-store-uri sqlite:///mlflow.db --default-artifact-root ./mlruns
 ```
-5. Secrets
+<!-- 5. Secrets
 populate `.env` with your `HUGGINGFACE_HUB_TOKEN`
 ```sh
 export $(cat .env | xargs)
 ```
 6. Head to Hugging Face and get access to downloading models
-e.g. [meta-llama/Llama-2-7b](https://huggingface.co/meta-llama/Llama-2-7b)
+e.g. [meta-llama/Llama-2-7b](https://huggingface.co/meta-llama/Llama-2-7b) -->
 
+## Usage
+```sh
+uv run jailbreak/main.py
+```
 
-## Visualization and Reporting
+## Visualization
 
 ### MLflow Tracking UI
 
