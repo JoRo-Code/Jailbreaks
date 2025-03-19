@@ -55,11 +55,15 @@ Results are tracked in MLflow and can be viewed through the MLflow UI:
 mlflow ui --port 5001
 ```
 
-Navigate to http://localhost:5001 to explore experiment results. Each run includes:
-- All configuration parameters
-- Metrics for utility and refusal
-- Detailed refusal benchmark results in CSV format
-- HTML summary tables of refusal data
+Navigate to http://localhost:5001 to explore experiment results. 
+
+### TODO:
+- [ ] Utility benchmark
+- [ ] GCG fitting
+- [ ] diff-in-means single direction
+- [ ] Refusal scorer (LLM/classifier):
+    - [ ] Refusal score
+    - [ ] Response Quality
 
 ## License
 
