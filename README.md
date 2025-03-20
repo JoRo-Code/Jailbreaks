@@ -59,11 +59,15 @@ Navigate to http://localhost:5001 to explore experiment results.
 
 ### TODO:
 - [ ] Utility benchmark
+    - Should prompts and answers be passed in a chat interface? Applying the chat-interface also adds system prompts. It is probably alright cause all this benchmark is trying to do is to evaluate the change when using methods
+    - [ ] handle when no answer is found, should be quantified. Would help debug the extraction and quantified the error rate. 
 - [ ] GCG fitting
 - [ ] diff-in-means single direction
 - [ ] Refusal scorer (LLM/classifier):
     - [ ] Refusal score
     - [ ] Response Quality
+- [ ] model support
+    - [ x ] Qwen2
 
 ## License
 
