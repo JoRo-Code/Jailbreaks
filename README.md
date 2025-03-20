@@ -3,7 +3,7 @@
 This repository contains a modular pipeline for evaluating different jailbreaking methods on language models. The pipeline is designed to benchmark various methods individually and in combination, tracking metrics for:
 
 1. **Refusal** - How resistant the model is to answering harmful prompts
-<!-- 2. **Utility** - How well the model retains its capabilities on standard benchmarks -->
+2. **Utility** - Capabilities on standard benchmarks like MMLU and HellaSwag
 <!-- 3. **Cost** - Computational expense in both fitting and inference time -->
 
 ## Setup
@@ -59,6 +59,8 @@ Navigate to http://localhost:5001 to explore experiment results.
 
 ### TODO:
 - [ ] Utility benchmark
+    - [x] MMLU
+    - [x] hellaswag
     - Should prompts and answers be passed in a chat interface? Applying the chat-interface also adds system prompts. It is probably alright cause all this benchmark is trying to do is to evaluate the change when using methods
     - [ ] handle when no answer is found, should be quantified. Would help debug the extraction and quantified the error rate. 
 - [ ] GCG fitting
@@ -67,9 +69,12 @@ Navigate to http://localhost:5001 to explore experiment results.
     - [ ] Refusal scorer (LLM/classifier):
         - [ ] Refusal score
         - [ ] Response Quality
-    - [ x ] logging to unique runs (model & method combinations)
+    - [x] logging to unique runs (model & method combinations)
 - [ ] model support
-    - [ x ] Qwen2
+    - [x] Qwen2
+
+- [ ] easy extraction of results
+- [ ] fitting time
 
 ## License
 
