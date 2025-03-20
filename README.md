@@ -63,9 +63,11 @@ Navigate to http://localhost:5001 to explore experiment results.
     - [ ] handle when no answer is found, should be quantified. Would help debug the extraction and quantified the error rate. 
 - [ ] GCG fitting
 - [ ] diff-in-means single direction
-- [ ] Refusal scorer (LLM/classifier):
-    - [ ] Refusal score
-    - [ ] Response Quality
+- [ ] Refusal Benchmark 
+    - [ ] Refusal scorer (LLM/classifier):
+        - [ ] Refusal score
+        - [ ] Response Quality
+    - [ x ] logging to unique runs (model & method combinations)
 - [ ] model support
     - [ x ] Qwen2
 
