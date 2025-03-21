@@ -63,20 +63,23 @@ mlflow ui --port 5001
 Navigate to http://localhost:5001 to explore experiment results. 
 
 ### TODO:
-- [ ] Utility benchmark
+- Utility benchmark
     - [x] MMLU
     - [x] hellaswag
     - Should prompts and answers be passed in a chat interface? Applying the chat-interface also adds system prompts. It is probably alright cause all this benchmark is trying to do is to evaluate the change when using methods
     - [ ] handle when no answer is found, should be quantified. Would help debug the extraction and quantified the error rate. 
-- [ ] GCG fitting
-    - Alternative: fit on model with hooks (ablated model)
-- [ ] diff-in-means single direction
-- [ ] Refusal Benchmark 
+- Methods
+    - [x] output aware generation exploit
+    - [x] GCG fitting
+        - Alternative: fit on model with hooks (ablated model)
+    - [ ] diff-in-means single direction
+- Refusal Benchmark 
+    - [x] simple "include"-classifier
     - [ ] Refusal scorer (LLM/classifier):
         - [ ] Refusal score
         - [ ] Response Quality
     - [x] logging to unique runs (model & method combinations)
-- [ ] model support
+- model support
     - [x] Qwen2
 
 - [ ] easy extraction of results
