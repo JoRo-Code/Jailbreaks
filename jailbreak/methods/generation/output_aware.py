@@ -24,7 +24,7 @@ class OutputAware(GenerationExploit):
         best_score = -1
         original_prompt = tokenizer.decode(inputs["input_ids"][0], skip_special_tokens=True)
         
-        logger.info(f"{self.name}: Trying parameters with {sum(len(values) for values in self.params.values())} combinations")
+        logger.debug(f"{self.name}: Trying parameters with {sum(len(values) for values in self.params.values())} combinations")
         
         for param_name, param_values in self.params.items():
             for value in param_values:
@@ -44,6 +44,5 @@ class OutputAware(GenerationExploit):
                     best_output = output_text
                     logger.debug(f"New best output (score: {score:.4f})")
                     
-        
-        logger.info(f"{self.name}: Best output had score {best_score:.4f} with {original_prompt} {best_output}")
-        return best_output
+        logger.debug(f"{self.name}: Best output had score {best_score:.4f}")
+        return original_prompt + best_output

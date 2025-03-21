@@ -58,7 +58,7 @@ class LLM:
     def _remove_prompt(self, prompt: str, response: str) -> str:
         return response[len(prompt):].strip()
 
-    def generate(self, prompt, decode:bool=True, return_input:bool=False, **kwargs):
+    def generate(self, prompt, decode:bool=True, return_input:bool=False, only_new_tokens:bool=True, **kwargs):
         for method in self.methods:
             if isinstance(method, PromptInjection):
                 prompt = method.preprocess(prompt, self.model.config.name_or_path)
@@ -76,8 +76,11 @@ class LLM:
                 )
         
         if not output_text:
-            output_text = self.model.generate(**inputs, **kwargs)
-            output_text = self._remove_prompt(output_text, prompt)
+            output_tokens = self.model.generate(**inputs, **kwargs)
+            output_text = self.tokenizer.decode(output_tokens[0], skip_special_tokens=True)
+        
+        if only_new_tokens:
+            output_text = self._remove_prompt(prompt, output_text)
         
         output = output_text
         if not decode:
@@ -234,7 +237,8 @@ class RefusalBenchmark(Benchmark):
         total_quality = 0
         
         for i, prompt in enumerate(tqdm(self.prompts, desc="Evaluating prompts")):
-            output_text, input_prompt = model.generate(prompt, return_input=True)          
+            output_text, input_prompt = model.generate(prompt, return_input=True, only_new_tokens=True, decode=True)          
+            logger.info(f"RefusalBenchmark - output: {output_text}\n\n")
             refused = self._is_refusal(output_text)
             if refused:
                 refusal_count += 1
@@ -360,7 +364,7 @@ def main():
     method_combinations = [
         #[ModelManipulation()],
         [OutputAware(params=sampling_params)],
-        [PrefixInjection()],
+        # [PrefixInjection()],
         # [PrefixInjection(), OutputAware()],
         #[PrefixInjection(), ModelManipulation(), OutputAware()]
         [],  # Baseline
@@ -369,7 +373,7 @@ def main():
         #UtilityBenchmark(dataset_name="MMLU", metric_name="accuracy", sample_limit=10),
         #UtilityBenchmark(dataset_name="HellaSwag", metric_name="accuracy", sample_limit=10),
         RefusalBenchmark(prompts=refusal_prompts),
-        UtilityBenchmark()
+        # UtilityBenchmark()
     ]
     
     pipe = JailbreakPipeline(models=models, method_combinations=method_combinations, benchmarks=benchmarks)
