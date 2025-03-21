@@ -256,7 +256,7 @@ class RefusalBenchmark(Benchmark):
                     "refused": refused,
                     "quality_score": quality_score
                 },
-                f"samples/{self.name}/{run_id}/{i}.json"
+                f"{self.name}_{run_id}/{i}.json"
             )
             
             results.append({
