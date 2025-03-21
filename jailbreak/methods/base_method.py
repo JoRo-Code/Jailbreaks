@@ -2,9 +2,6 @@ from abc import ABC
 from typing import Dict
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
-import logging
-
-logger = logging.getLogger("jailbreak_pipeline")
 
 class JailBreakMethod(ABC):
     def __init__(self, name: str = None):

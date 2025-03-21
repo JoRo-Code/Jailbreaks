@@ -13,5 +13,5 @@ pytest>=7.4.0
 
 deepeval
 tqdm
-
+nanogcg
 

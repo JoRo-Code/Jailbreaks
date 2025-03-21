@@ -6,7 +6,7 @@ import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 import logging
 
-logger = logging.getLogger("jailbreak_pipeline")
+logger = logging.getLogger("OutputAware")
 
 class OutputAware(GenerationExploit):
     def __init__(self, params: Dict[str, Any] = None, output_scorer=None, ):

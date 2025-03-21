@@ -8,3 +8,5 @@ mlflow.db
 results/
 
 *.deepeval_telemetry.txt
+
+*.json
