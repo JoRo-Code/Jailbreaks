@@ -85,6 +85,9 @@ Navigate to http://localhost:5001 to explore experiment results.
 - [ ] easy extraction of results
 - [ ] fitting time
 
+## Issues
+- GCG: Qwen/Qwen2.0-0.5B-Instruct crashes midway fitting, on iteration 358/500. 
+
 ## License
 
 [MIT License](LICENSE)

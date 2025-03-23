@@ -342,6 +342,20 @@ class JailbreakPipeline:
         pipeline_duration = time.time() - pipeline_start_time
         logger.info(f"Pipeline execution completed in {pipeline_duration:.2f}s")
         logger.info(f"Results stored in MLflow experiment: {experiment_name}")
+        
+
+import requests
+import pandas as pd
+import io
+from sklearn.model_selection import train_test_split
+
+def get_advbench_instructions():
+    url = 'https://raw.githubusercontent.com/llm-attacks/llm-attacks/main/data/advbench/harmful_behaviors.csv'
+    response = requests.get(url)
+
+    dataset = pd.read_csv(io.StringIO(response.content.decode('utf-8')))
+    instructions = dataset['goal'].tolist()
+    return instructions
 
 def main():
     logging.getLogger("jailbreak_pipeline").setLevel(getattr(logging, "INFO"))
@@ -384,18 +398,17 @@ def main():
 
     method_combinations = [
         #[ModelManipulation()],
-        #[OutputAware(params=sampling_params)],
+        [OutputAware(params=sampling_params)],
         [gcg],
         # [PrefixInjection()],
         # [PrefixInjection(), OutputAware()],
         #[PrefixInjection(), ModelManipulation(), OutputAware()]
         [],  # Baseline
     ]
+
     benchmarks = [
-        #UtilityBenchmark(dataset_name="MMLU", metric_name="accuracy", sample_limit=10),
-        #UtilityBenchmark(dataset_name="HellaSwag", metric_name="accuracy", sample_limit=10),
-        RefusalBenchmark(prompts=refusal_prompts),
-        # UtilityBenchmark()
+        RefusalBenchmark(prompts=get_advbench_instructions()),
+        UtilityBenchmark(n_samples=100)
     ]
     
     pipe = JailbreakPipeline(models=models, method_combinations=method_combinations, benchmarks=benchmarks)
