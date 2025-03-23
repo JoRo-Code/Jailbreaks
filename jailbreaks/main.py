@@ -300,12 +300,13 @@ class JailbreakPipeline:
         self, 
         models: List[AutoModelForCausalLM] = None,
         method_combinations: List[List[JailBreakMethod]] = None,
-        benchmarks: List = None
+        benchmarks: List = None,
+        device: str = None
     ):
         self.models = models or []
         self.method_combinations = method_combinations or [[]]
         self.benchmarks = benchmarks or []
-    
+        self.device = device or "cuda" if torch.cuda.is_available() else "cpu"
     def run(self, experiment_name: str = "jailbreak_evaluation"):
         logger.info(f"Starting jailbreak evaluation pipeline with experiment name: {experiment_name}")
         logger.info(f"Evaluating {len(self.models)} models with {len(self.method_combinations)} method combinations")
@@ -331,7 +332,7 @@ class JailbreakPipeline:
                     run_id = mlflow.active_run().info.run_id
                     logger.info(f"  Started MLflow run: {run_id}")
 
-                    jailbreak_model = LLM(model, method_combo)
+                    jailbreak_model = LLM(model, method_combo, device=self.device)
                     for benchmark in self.benchmarks:
                         logger.info(f"Evaluating {benchmark.__str__()} with {combo_name} on {model_name}")
                         benchmark.evaluate(jailbreak_model)
