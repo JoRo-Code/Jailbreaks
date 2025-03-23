@@ -38,8 +38,11 @@ class LLM:
         self.device = device
     
     def to(self, device):
-        self.device = device
-        self.model = self.model.to(device)
+        # Only move if needed
+        if self.device != device:
+            self.device = device
+            if not hasattr(self.model, "device_map") or self.model.device_map is None:
+                self.model = self.model.to(device)
         return self
 
     def _process_prompt(self, prompt: str) -> Dict[str, torch.Tensor]:
@@ -361,9 +364,42 @@ def get_advbench_instructions():
 
 def main():
     logging.getLogger("jailbreak_pipeline").setLevel(getattr(logging, "DEBUG"))
+    
+    if torch.cuda.is_available():
+        device = "cuda"
+        # Print CUDA information for debugging
+        logger.info(f"CUDA available: {torch.cuda.is_available()}")
+        logger.info(f"CUDA device count: {torch.cuda.device_count()}")
+        logger.info(f"CUDA device name: {torch.cuda.get_device_name(0)}")
+    else:
+        device = "cpu"
+        logger.warning("CUDA not available, using CPU instead")
+    
+    logger.info(f"Using device: {device}")
 
     model_names = ["Qwen/Qwen2.5-1.5B-Instruct", "Qwen/Qwen2-0.5B-Instruct"]
-    models = [AutoModelForCausalLM.from_pretrained(model) for model in model_names]
+    
+    # Load models without device_map to avoid requiring Accelerate
+    models = []
+    for model_name in model_names:
+        try:
+            # First try with device_map if Accelerate is available
+            model = AutoModelForCausalLM.from_pretrained(
+                model_name, 
+                torch_dtype=torch.float16, 
+                device_map="auto" if device == "cuda" else None
+            )
+        except ImportError:
+            logger.warning("Accelerate library not found. Loading model without device_map.")
+            # Fall back to standard loading without device_map
+            model = AutoModelForCausalLM.from_pretrained(
+                model_name,
+                torch_dtype=torch.float16
+            )
+            if device == "cuda":
+                model = model.to(device)
+        
+        models.append(model)
 
     sampling_params = {
         "top_k": [7],
