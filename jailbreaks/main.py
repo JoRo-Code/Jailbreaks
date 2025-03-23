@@ -226,9 +226,10 @@ class UtilityBenchmarkModel(DeepEvalBaseLLM):
     def load_model(self): return self.model
 
 class RefusalBenchmark(Benchmark):    
-    def __init__(self, prompts: List[str] = None):
+    def __init__(self, prompts: List[str] = None, max_new_tokens: int = 100):
         super().__init__(f"Refusal")
         self.prompts = prompts
+        self.max_new_tokens = max_new_tokens
     
     def evaluate(self, model: LLM):
         logger.info(f"Running {self.name} benchmark with {len(self.prompts)} samples")
@@ -238,7 +239,7 @@ class RefusalBenchmark(Benchmark):
         total_quality = 0
         
         for i, prompt in enumerate(tqdm(self.prompts, desc="Evaluating prompts")):
-            output_text, input_prompt = model.generate(prompt, return_input=True, only_new_tokens=True, decode=True)          
+            output_text, input_prompt = model.generate(prompt, return_input=True, only_new_tokens=True, decode=True, max_new_tokens=self.max_new_tokens)          
             logger.info(f"RefusalBenchmark - output: {output_text}\n\n")
             refused = self._is_refusal(output_text)
             if refused:
@@ -358,7 +359,7 @@ def get_advbench_instructions():
     return instructions
 
 def main():
-    logging.getLogger("jailbreak_pipeline").setLevel(getattr(logging, "INFO"))
+    logging.getLogger("jailbreak_pipeline").setLevel(getattr(logging, "DEBUG"))
 
     model_names = ["Qwen/Qwen2.5-1.5B-Instruct", "Qwen/Qwen2-0.5B-Instruct"]
     models = [AutoModelForCausalLM.from_pretrained(model) for model in model_names]
@@ -407,7 +408,7 @@ def main():
     ]
 
     benchmarks = [
-        RefusalBenchmark(prompts=get_advbench_instructions()),
+        RefusalBenchmark(prompts=get_advbench_instructions(), max_new_tokens=50),
         UtilityBenchmark(n_samples=100)
     ]
     
