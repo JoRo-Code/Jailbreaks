@@ -1,4 +1,4 @@
-from jailbreak.methods.base_method import PromptInjection
+from jailbreaks.methods.base_method import PromptInjection
 
 class PrefixInjection(PromptInjection):
     def __init__(self):

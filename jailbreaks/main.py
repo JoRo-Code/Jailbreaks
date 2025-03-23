@@ -14,12 +14,12 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 from deepeval.models.base_model import DeepEvalBaseLLM
 from deepeval.benchmarks.schema import MultipleChoiceSchema
 
-from jailbreak.methods.base_method import JailBreakMethod, PromptInjection, GenerationExploit
+from jailbreaks.methods.base_method import JailBreakMethod, PromptInjection, GenerationExploit
 
-from jailbreak.methods.prompt import PrefixInjection, GCG
-from jailbreak.methods.generation import OutputAware
-from jailbreak.utils import is_refusal
-from jailbreak.methods.prompt.gcg import GCGConfig
+from jailbreaks.methods.prompt import PrefixInjection, GCG
+from jailbreaks.methods.generation import OutputAware
+from jailbreaks.utils import is_refusal
+from jailbreaks.methods.prompt.gcg import GCGConfig
 
 import logging
 # Configure logging

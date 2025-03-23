@@ -1,6 +1,6 @@
 
-from jailbreak.methods.base_method import GenerationExploit
-from jailbreak.utils import is_refusal
+from jailbreaks.methods.base_method import GenerationExploit
+from jailbreaks.utils import is_refusal
 from typing import Dict, Any
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer

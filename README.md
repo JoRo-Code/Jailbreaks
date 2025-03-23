@@ -47,7 +47,7 @@ e.g. [meta-llama/Llama-2-7b](https://huggingface.co/meta-llama/Llama-2-7b) -->
 
 ## Usage
 ```sh
-uv run jailbreak/main.py
+uv run jailbreaks/main.py
 ```
 
 ## Visualization
@@ -67,7 +67,7 @@ Navigate to http://localhost:5001 to explore experiment results.
     - [x] MMLU
     - [x] hellaswag
     - Should prompts and answers be passed in a chat interface? Applying the chat-interface also adds system prompts. It is probably alright cause all this benchmark is trying to do is to evaluate the change when using methods
-    - [ ] handle when no answer is found, should be quantified. Would help debug the extraction and quantified the error rate. 
+    - [ ] handle when no answer is found, should be quantified. Would help debug the extraction and quantify the error rate. 
 - Methods
     - [x] output aware generation exploit
     - [x] GCG fitting

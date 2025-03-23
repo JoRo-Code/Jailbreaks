@@ -1,4 +1,4 @@
-from jailbreak.methods.base_method import PromptInjection
+from jailbreaks.methods.base_method import PromptInjection
 import nanogcg
 from nanogcg import GCGConfig
 from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -58,11 +58,10 @@ class PastKeyValuesWrapper:
 
 import json
 class GCG(PromptInjection):
-    def __init__(self, message: str, target: str, refit: bool = False, config: GCGConfig = None, path: str = None):
+    def __init__(self, message: str, target: str, config: GCGConfig = None, path: str = None):
         super().__init__()
         self.message = message
         self.target = target
-        self.refit = refit
         self.suffixes = {}
         self.config = config or GCGConfig(
             num_steps=500,
@@ -116,9 +115,9 @@ class GCG(PromptInjection):
         self.suffixes[model_name] = result.best_string
         return result
 
-    def preprocess(self, prompt: str, model_name: str) -> str:
-        if model_name not in self.suffixes or self.refit:
-            self.fit([model_name])
+    def preprocess(self, prompt: str, model_name: str, refit: bool = False) -> str:
+        if model_name not in self.suffixes or refit:
+            self.fit([model_name], refit)
             
         return f"{prompt} {self.suffixes[model_name]}"
 
