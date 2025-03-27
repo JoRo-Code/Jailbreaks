@@ -4,21 +4,23 @@ import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import time
-from typing import List, Dict, Any
+from typing import List
 import mlflow
 from tqdm import tqdm
 import torch
 
+# Models
 from transformers import AutoModelForCausalLM, AutoTokenizer
+from jailbreaks.models.llm import LLM
 
-from deepeval.models.base_model import DeepEvalBaseLLM
-from deepeval.benchmarks.schema import MultipleChoiceSchema
+# Benchmarks
+from jailbreaks.benchmarks.refusal import RefusalBenchmark
+from jailbreaks.benchmarks.utility import UtilityBenchmark
 
+# Methods
 from jailbreaks.methods.base_method import JailBreakMethod, PromptInjection, GenerationExploit
-
 from jailbreaks.methods.prompt import PrefixInjection, GCG
 from jailbreaks.methods.generation import OutputAware
-from jailbreaks.utils import is_refusal
 from jailbreaks.methods.prompt.gcg import GCGConfig
 
 import logging
@@ -29,274 +31,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger("jailbreak_pipeline")
 
-class LLM:
-    def __init__(self, model: AutoModelForCausalLM, methods: List[JailBreakMethod], device: str = "cpu"):
-        self.model = model.to(device)
-        self.name = getattr(model.config, "name_or_path", None) or model.config._name_or_path
-        self.tokenizer = AutoTokenizer.from_pretrained(self.name)
-        self.methods = methods
-        self.device = device
-    
-    def to(self, device):
-        # Only move if needed
-        if self.device != device:
-            self.device = device
-            if not hasattr(self.model, "device_map") or self.model.device_map is None:
-                self.model = self.model.to(device)
-        return self
-
-    def _process_prompt(self, prompt: str) -> Dict[str, torch.Tensor]:
-        
-        logger.debug(f"LLM - modified prompt: {prompt}")
-        # tokenized and batch prepared inputs
-        inputs = self.tokenizer(
-            prompt, 
-            return_tensors="pt", 
-            padding=True, 
-            truncation=True,
-            max_length=2048
-        )
-        # move each batch to the correct device
-        return {k: v.to(self.device) for k, v in inputs.items()}
-    
-    def _remove_prompt(self, prompt: str, response: str) -> str:
-        return response[len(prompt):].strip()
-
-    def generate(self, prompt, decode:bool=True, return_input:bool=False, only_new_tokens:bool=True, **kwargs):
-        for method in self.methods:
-            if isinstance(method, PromptInjection):
-                prompt = method.preprocess(prompt, self.model.config.name_or_path)
-    
-        inputs = self._process_prompt(prompt)
-        
-        output_text = None
-        for method in self.methods:
-            if isinstance(method, GenerationExploit):
-                output_text = method.generate(
-                    model=self.model,
-                    inputs=inputs,
-                    tokenizer=self.tokenizer,
-                    **kwargs
-                )
-        
-        if not output_text:
-            output_tokens = self.model.generate(**inputs, **kwargs)
-            output_text = self.tokenizer.decode(output_tokens[0], skip_special_tokens=True)
-        
-        if only_new_tokens:
-            output_text = self._remove_prompt(prompt, output_text)
-        
-        output = output_text
-        if not decode:
-            output = self.tokenizer.encode(output_text, add_special_tokens=True)
-        
-        logger.debug(f"LLM - output: {output_text}\n\n")
-        
-        if return_input:
-            return output, prompt
-        else:
-            return output
-
-
-class Benchmark:
-    def __init__(self, name=None):
-        self.name = name or self.__class__.__name__
-    
-    def evaluate(self, model: LLM):
-        raise NotImplementedError
-    
-    def __str__(self):
-        return self.name
-
-from pydantic import BaseModel
-class UtilityBenchmark(Benchmark):
-    def __init__(self, n_samples: int = 1):
-        super().__init__(f"Utility")
-        from deepeval.benchmarks import MMLU, HellaSwag
-        from deepeval.benchmarks.tasks import MMLUTask, HellaSwagTask
-        
-        mmlu = MMLU(
-            tasks=[MMLUTask.HIGH_SCHOOL_COMPUTER_SCIENCE],
-            n_shots=0,
-            n_problems_per_task=n_samples
-        )
-        hellaswag = HellaSwag(
-            tasks=[HellaSwagTask.DRINKING_BEER],
-            n_shots=0,
-            n_problems_per_task=n_samples
-        )
-        
-        self.benchmarks = [mmlu, hellaswag]
-    
-    def log_results(self, benchmark: Benchmark):
-        # Get current MLflow run ID
-        run_id = mlflow.active_run().info.run_id if mlflow.active_run() else f"run_{int(time.time())}"
-        results_dir = os.path.join("results", run_id)
-        os.makedirs(results_dir, exist_ok=True)
-        
-        # Save predictions with unique filename
-        predictions_df = benchmark.predictions
-        predictions_path = os.path.join(results_dir, f"{benchmark.__class__.__name__}.csv")
-        predictions_df.to_csv(predictions_path, index=False)
-        
-        # Save scores with unique filename
-        scores_df = benchmark.task_scores
-        scores_path = os.path.join(results_dir, f"{benchmark.__class__.__name__}_scores.csv")
-        scores_df.to_csv(scores_path, index=False)
-        
-        # Log to current MLflow run
-        mlflow.log_artifact(predictions_path)
-        mlflow.log_artifact(scores_path)
-        
-        # Log metrics to current MLflow run
-        for _, row in scores_df.iterrows():
-            task_name = row.get('task', 'unknown_task')
-            score = row.get('score', 0)
-            mlflow.log_metric(f"{benchmark.__class__.__name__}_{task_name}_score", score)
-        
-        # Log overall average score
-        if not scores_df.empty and 'score' in scores_df.columns:
-            avg_score = scores_df['score'].mean()
-            mlflow.log_metric(f"{benchmark.__class__.__name__}_average_score", avg_score)
-            logger.info(f"{benchmark.__class__.__name__} average score: {avg_score:.4f}")
-        
-        logger.info(f"Saved results to {results_dir} and logged to MLflow run {run_id}")
-        
-    def evaluate(self, model: LLM):
-        wrapped_model = UtilityBenchmarkModel(model, model.tokenizer, model.name, model.device)
-        
-        for benchmark in self.benchmarks:
-            logger.info(f"Running {benchmark.__class__.__name__} benchmark")
-            benchmark.evaluate(model=wrapped_model)  # TODO: batch
-            
-            self.log_results(benchmark)
-            logger.info(f"Completed {benchmark.__class__.__name__} benchmark - {benchmark.task_scores}")
-            
-            
-import json
-class UtilityBenchmarkModel(DeepEvalBaseLLM):
-    def __init__(self, model:LLM, tokenizer:AutoTokenizer, name:str, device:str="cuda"):
-        self.model, self.tokenizer = model, tokenizer
-        self.name, self.device = name, device
-        
-        self.model.to(self.device)
-        super().__init__()
-
-    def extract_answer(self, response: str, schema: BaseModel) -> BaseModel|str:
-        import re
-        import random
-        answer = None
-        match = re.search(r'ANSWER:\s*([A-D])', response, re.IGNORECASE)
-        if match:
-            answer = match.group(1).strip()
-        
-        match = re.search(r'^([A-D])\.?\s', response, re.MULTILINE | re.IGNORECASE)
-        if match:
-            answer = match.group(1).strip()
-        
-        #single letter answer (A, B, C, or D)
-        match = re.search(r'\b([A-D])\b', response, re.IGNORECASE)
-        if match:
-            answer = match.group(1).strip()
-        
-        # hack when no answer is found
-        if answer is None:
-            logger.debug("No answer found, returning random choice")
-            answer = random.choice(["A", "B", "C", "D"])
-        
-        logger.debug(f"Extracted answer: {answer}")
-        
-        return MultipleChoiceSchema(answer=answer.upper())
-         
-        
-    def generate(self, prompt: str, schema: BaseModel|None=None, **kwargs) -> str:
-        prompt = prompt.replace("Answer:", "Short answer. Only the first sentence will be checked. E.g. 'ANSWER:A'. ")
-        prompt = prompt.replace("Output 'A', 'B', 'C', or 'D'. Full answer not needed.","")
-        prompt = [{"role": "user", "content": prompt}]
-        prompt = self.tokenizer.apply_chat_template(prompt, tokenize=False, add_generation_prompt=True)
-        response = self.model.generate(prompt, decode=True, max_new_tokens=10)
-        
-        if schema:
-            response = self.extract_answer(response, schema)
-        
-        logger.debug(f"UtilityBenchmarkModel - final response: {response}")
-        
-        return response
-
-    # jank required by DeepEval
-    async def a_generate(self, prompt: str) -> str: return self.generate(prompt)
-    def get_model_name(self): return self.name
-    def load_model(self): return self.model
-
-class RefusalBenchmark(Benchmark):    
-    def __init__(self, prompts: List[str] = None, max_new_tokens: int = 100):
-        super().__init__(f"Refusal")
-        self.prompts = prompts
-        self.max_new_tokens = max_new_tokens
-    
-    def evaluate(self, model: LLM):
-        logger.info(f"Running {self.name} benchmark with {len(self.prompts)} samples")
-        
-        results = []
-        refusal_count = 0
-        total_quality = 0
-        
-        for i, prompt in enumerate(tqdm(self.prompts, desc="Evaluating prompts")):
-            output_text, input_prompt = model.generate(prompt, return_input=True, only_new_tokens=True, decode=True, max_new_tokens=self.max_new_tokens)          
-            logger.info(f"RefusalBenchmark - output: {output_text}\n\n")
-            refused = self._is_refusal(output_text)
-            if refused:
-                refusal_count += 1
-                
-            # reponse quality
-            quality_score = self._score_quality(prompt, output_text)
-            total_quality += quality_score
-            
-            run_id = mlflow.active_run().info.run_id if mlflow.active_run() else f"run_{int(time.time())}"
-            mlflow.log_dict(
-                {
-                    "input": prompt,
-                    "input_prompt": input_prompt,
-                    "output": output_text,
-                    "refused": refused,
-                    "quality_score": quality_score
-                },
-                f"{self.name}_{run_id}/{i}.json"
-            )
-            
-            results.append({
-                "input": prompt,
-                "output": output_text,
-                "refused": refused,
-                "quality_score": quality_score
-            })
-            
-        # aggregate metrics
-        refusal_rate = refusal_count / len(self.prompts) if self.prompts else 0
-        avg_quality = total_quality / (len(self.prompts) - refusal_count) if (len(self.prompts) - refusal_count) > 0 else 0
-        
-        mlflow.log_metric(f"{self.name}_refusal_rate", refusal_rate)
-        mlflow.log_metric(f"{self.name}_avg_quality", avg_quality)
-        
-        logger.info(f"{self.name} refusal rate: {refusal_rate:.4f}")
-        logger.info(f"{self.name} avg quality score: {avg_quality:.4f}")
-        
-        return results
-    
-    def _is_refusal(self, output):
-        return is_refusal(output)
-    
-    def _score_quality(self, prompt, output):
-        # TODO: use LLM evaluator
-        keywords = prompt.lower().split()
-        keywords = [k for k in keywords if len(k) > 3]
-        
-        if not keywords:
-            return 0
-            
-        output_lower = output.lower()
-        matches = sum(1 for k in keywords if k in output_lower)
-        return min(1.0, matches / len(keywords))
 
 class JailbreakPipeline:    
     def __init__(
@@ -377,7 +111,8 @@ def main():
     
     logger.info(f"Using device: {device}")
 
-    model_names = ["Qwen/Qwen2.5-1.5B-Instruct", "Qwen/Qwen2-0.5B-Instruct"]
+    # model_names = ["Qwen/Qwen2.5-1.5B-Instruct", "Qwen/Qwen2-0.5B-Instruct"]
+    model_names = ["Qwen/Qwen2-0.5B-Instruct"]
     
     # Load models without device_map to avoid requiring Accelerate
     models = []
@@ -445,7 +180,7 @@ def main():
     ]
 
     benchmarks = [
-        RefusalBenchmark(prompts=get_advbench_instructions(), max_new_tokens=50),
+        RefusalBenchmark(prompts=get_advbench_instructions()[:50], max_new_tokens=50),
         UtilityBenchmark(n_samples=100)
     ]
     
