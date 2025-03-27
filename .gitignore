@@ -10,3 +10,4 @@ results/
 *.deepeval_telemetry.txt
 
 *.json
+*.ipynb_checkpoints/
