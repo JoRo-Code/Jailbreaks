@@ -11,3 +11,5 @@ results/
 
 *.json
 *.ipynb_checkpoints/
+
+checkpoints/
