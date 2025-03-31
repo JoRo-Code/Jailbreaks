@@ -2,7 +2,7 @@ from jailbreaks.methods.base_method import ModelManipulation
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 import torch
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Tuple, Callable
 from jaxtyping import Float, Int
 from torch import Tensor
 import functools
@@ -106,7 +106,11 @@ class DiffInMeans(ModelManipulation):
         )
         return model
     
-    def fit(self, model_path: str, harmful_prompts: List[str], harmless_prompts: List[str]) -> str:
+    def fit(self, model_path: str, harmful_prompts: List[str], harmless_prompts: List[str], refit=False) -> str:
+        if model_path in self.model2hooks and not refit:
+            logger.info(f"Skipping fitting for model {model_path} because it already exists")
+            return self.hooks_for_model(model_path)
+        
         logger.info(f"Loading model {model_path}")
         model = self.load_model(model_path)
         
@@ -145,6 +149,16 @@ class DiffInMeans(ModelManipulation):
         model = self.load_model(model_path)
         hooks = self.model2hooks[model_path]
         return self._generate_with_hooks(model, inputs, fwd_hooks=hooks, **kwargs)
+    
+    def generate_completion(self, model_path: str, prompt: str, **kwargs) -> str:
+        model = self.load_model(model_path)
+        hooks = self.model2hooks[model_path]
+        toks = tokenize_prompts([prompt], model.tokenizer)
+        return self._generate_with_hooks(model, toks, fwd_hooks=hooks, **kwargs)
+    
+    def hooks_for_model(self, model_path: str) -> List[Tuple[str, Callable]]:
+        return self.model2hooks[model_path]
+    
     
     def _generate_with_hooks(
         self,
