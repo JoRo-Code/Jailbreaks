@@ -142,40 +142,22 @@ class DiffInMeans(ModelManipulation):
         self.model2hooks[model_path] = fwd_hooks
         
         logger.info(f"Saved hooks for model {model_path}")
-        
         return fwd_hooks
         
     def generate(self, model_path: str, inputs: Dict[str, torch.Tensor], **kwargs) -> str:
         model = self.load_model(model_path)
         hooks = self.model2hooks[model_path]
-        return self._generate_with_hooks(model, inputs, fwd_hooks=hooks, **kwargs)
+        with model.hooks(hooks):
+            output = model.generate(inputs, **kwargs)
+        return model.tokenizer.decode(output[0])
     
     def generate_completion(self, model_path: str, prompt: str, **kwargs) -> str:
         model = self.load_model(model_path)
         hooks = self.model2hooks[model_path]
         toks = tokenize_prompts([prompt], model.tokenizer)
-        return self._generate_with_hooks(model, toks, fwd_hooks=hooks, **kwargs)
+        with model.hooks(hooks):
+            output = model.generate(toks, **kwargs)
+        return model.tokenizer.decode(output[0])
     
-    def hooks_for_model(self, model_path: str) -> List[Tuple[str, Callable]]:
+    def get_hooks(self, model_path: str) -> List[Tuple[str, Callable]]:
         return self.model2hooks[model_path]
-    
-    
-    def _generate_with_hooks(
-        self,
-        model: HookedTransformer,
-        toks: Int[Tensor, 'batch_size seq_len'], # TODO: fix type
-        max_new_tokens: int = 64,
-        fwd_hooks = [],
-        **kwargs,
-    ) -> List[str]:
-
-        all_toks = torch.zeros((toks.shape[0], toks.shape[1] + max_new_tokens), dtype=torch.long, device=toks.device)
-        all_toks[:, :toks.shape[1]] = toks
-
-        for i in range(max_new_tokens):
-            with model.hooks(fwd_hooks=fwd_hooks):
-                logits = model(all_toks[:, :-max_new_tokens + i])
-                next_tokens = logits[:, -1, :].argmax(dim=-1) # greedy sampling (temperature=0) # TODO: flexible sampling
-                all_toks[:,-max_new_tokens+i] = next_tokens
-
-        return model.tokenizer.batch_decode(all_toks[:, toks.shape[1]:], skip_special_tokens=True)
