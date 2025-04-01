@@ -18,30 +18,27 @@ import os
 logger = logging.getLogger("DiffInMeans")
 
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     force=True
 )
-
-
 
 QWEN_CHAT_TEMPLATE = """<|im_start|>user
 {instruction}<|im_end|>
 <|im_start|>assistant
 """
 
-# TODO: move to utils
-# think about how to include prefix injections in the assistant 
-def tokenize_prompts(prompts: List[str], tokenizer: AutoTokenizer) -> List[str]:
-    # Check if it's a Qwen model
+def format_prompts(prompts: List[str], tokenizer: AutoTokenizer) -> List[str]:
     if tokenizer.name_or_path and "Qwen" in tokenizer.name_or_path:
-        # Use Qwen-specific template
-        prompts = [QWEN_CHAT_TEMPLATE.format(instruction=prompt) for prompt in prompts]
-    
+        return [QWEN_CHAT_TEMPLATE.format(instruction=prompt) for prompt in prompts]
     else:
         raise Exception(f"Tokenizer {tokenizer.name_or_path} not supported. Add chat template to tokenizer.")
-    
+
+def tokenize_prompts(prompts: List[str], tokenizer: AutoTokenizer) -> List[str]:
     return tokenizer(prompts, padding=True,truncation=False, return_tensors="pt").input_ids
+
+def hooked_transformer_path(model: HookedTransformer) -> str:
+    return model.cfg.tokenizer_name
 
 def direction_ablation_hook(
     activation: Float[Tensor, "... d_act"],
@@ -51,65 +48,78 @@ def direction_ablation_hook(
     proj = einops.einsum(activation, direction.view(-1, 1), '... d_act, d_act single -> ... single') * direction
     return activation - proj
 
+def generate_hooks(model: HookedTransformer, direction: Float[Tensor, "d_act"]):
+    intervention_layers = list(range(model.cfg.n_layers)) # all layers
+    hook_fn = functools.partial(direction_ablation_hook,direction=direction)
+    fwd_hooks = [(utils.get_act_name(act_name, l), hook_fn) for l in intervention_layers for act_name in ['resid_pre', 'resid_mid', 'resid_post']]
+    return fwd_hooks
+
 class DiffInMeans(ModelManipulation):
-    def __init__(self, path: str = None):
+    def __init__(self, path: str = None, use_cache: bool = True):
         super().__init__()
         self.name = "diff-in-means"
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self.path = path or "jailbreaks/checkpoints/diff-in-means.pkl"
-        self.model2hooks = self.load(self.path) or {}        
+        self.directions = self.load_directions(self.path) if use_cache else {}
+
+    def apply(self, model: AutoModelForCausalLM) -> str:
+        original_generate = model.generate
+        if not isinstance(model, HookedTransformer):
+            model = self._convert_to_hooked_transformer(model)
+        else:
+            logger.warning("Model is already a HookedTransformer")
+
+        model_path = hooked_transformer_path(model)
+        direction = self.get_direction(model_path)
+        hooks = generate_hooks(model, direction)
+        
+        def new_generate(*args, **kwargs):
+            with model.hooks(hooks):
+                logger.debug(f"Generating with '{len(hooks)}' hooks")
+                return original_generate(*args, **kwargs)
+                
+        model.generate = new_generate
+                
+        return model
     
     def save(self, path: str = None):
         path = path or self.path
+        self.save_directions(path)
+
+    def save_directions(self, path: str = None):
+        path = path or self.path
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        
-        try:
-            with open(path, "wb") as f:
-                pickle.dump({
-                    "version": "1.0",
-                    "model2hooks": self.model2hooks
-                }, f)
-            logger.info(f"Successfully saved model hooks to {path}")
-        except Exception as e:
-            logger.error(f"Failed to save model hooks: {e}")
-            
-    def load(self, path: str = None):
+        with open(path, "wb") as f:
+            pickle.dump(self.directions, f)
+    
+    def load_directions(self, path: str = None) -> Dict[str, Float[Tensor, "d_act"]]:
         path = path or self.path
         if not os.path.exists(path):
-            logger.warning(f"No saved hooks found at {path}")
-            return False
-        try:
-            with open(path, "rb") as f:
-                data = pickle.load(f)
-                
-            # Handle versioning if needed
-            if isinstance(data, dict) and "version" in data:
-                hooks = data["model2hooks"]
-            else:
-                # Legacy format
-                hooks = data
-                
-            logger.info(f"Successfully loaded model hooks from {path}")
-            return hooks
-        except Exception as e:
-            logger.warning(f"No hooks found at {path}, initializing empty model2hooks")
+            logger.warning(f"No saved directions found at {path}")
             return {}
+        with open(path, "rb") as f:
+            directions = pickle.load(f)
+        return directions
+    
+    def _convert_to_hooked_transformer(self, model: AutoModelForCausalLM) -> HookedTransformer:
+        return self.load_model(model.name_or_path)
     
     def load_model(self, model_path: str) -> HookedTransformer:
+        logger.info(f"Loading {model_path} as HookedTransformer")
         model = HookedTransformer.from_pretrained_no_processing(
             model_path,
             device=self.device,
             dtype=torch.float16,
             default_padding_side='left',
-            fp16=True,
+            #fp16=True,
             trust_remote_code=True
         )
         return model
     
     def fit(self, model_path: str, harmful_prompts: List[str], harmless_prompts: List[str], refit=False) -> str:
-        if model_path in self.model2hooks and not refit:
+        if model_path in self.directions and not refit:
             logger.info(f"Skipping fitting for model {model_path} because it already exists")
-            return self.hooks_for_model(model_path)
+            return self.get_direction(model_path)
         
         logger.info(f"Loading model {model_path}")
         model = self.load_model(model_path)
@@ -136,28 +146,33 @@ class DiffInMeans(ModelManipulation):
         
         intervention_dir = refusal_dir
         
-        intervention_layers = list(range(model.cfg.n_layers)) # all layers
-        hook_fn = functools.partial(direction_ablation_hook,direction=intervention_dir)
-        fwd_hooks = [(utils.get_act_name(act_name, l), hook_fn) for l in intervention_layers for act_name in ['resid_pre', 'resid_mid', 'resid_post']]
-        self.model2hooks[model_path] = fwd_hooks
+        self.directions[model_path] = intervention_dir
         
-        logger.info(f"Saved hooks for model {model_path}")
-        return fwd_hooks
+        logger.info(f"Saved direction for model {model_path}")
+        return self.directions[model_path]
         
-    def generate(self, model_path: str, inputs: Dict[str, torch.Tensor], **kwargs) -> str:
-        model = self.load_model(model_path)
-        hooks = self.model2hooks[model_path]
-        with model.hooks(hooks):
-            output = model.generate(inputs, **kwargs)
-        return model.tokenizer.decode(output[0])
+    # def generate(self, model_path: str, inputs: Dict[str, torch.Tensor], **kwargs) -> str:
+    #     model = self.load_model(model_path)
+    #     hooks = self.model2hooks[model_path]
+    #     with model.hooks(hooks):
+    #         output = model.generate(inputs, **kwargs)
+    #     return model.tokenizer.decode(output[0])
     
-    def generate_completion(self, model_path: str, prompt: str, **kwargs) -> str:
-        model = self.load_model(model_path)
-        hooks = self.model2hooks[model_path]
-        toks = tokenize_prompts([prompt], model.tokenizer)
-        with model.hooks(hooks):
-            output = model.generate(toks, **kwargs)
-        return model.tokenizer.decode(output[0])
+    # def generate_completion(self, model_path: str, prompt: str, **kwargs) -> str:
+    #     model = self.load_model(model_path)
+    #     hooks = self.model2hooks[model_path]
+    #     toks = tokenize_prompts([prompt], model.tokenizer)
+    #     with model.hooks(hooks):
+    #         output = model.generate(toks, **kwargs)
+    #     return model.tokenizer.decode(output[0])
     
-    def get_hooks(self, model_path: str) -> List[Tuple[str, Callable]]:
-        return self.model2hooks[model_path]
+    def get_direction(self, model_path: str) -> Float[Tensor, "d_act"]:
+        if model_path not in self.directions:
+            raise ValueError(f"No direction found for model {model_path}")
+        return self.directions[model_path]
+    
+    def get_hooks(self, model: HookedTransformer) -> List[Tuple[str, Callable]]:
+        model_path = hooked_transformer_path(model)
+        if model_path not in self.directions:
+            raise ValueError(f"No direction found for model {model_path}")
+        return generate_hooks(model, self.directions[model_path])
