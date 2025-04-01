@@ -14,6 +14,8 @@ from transformer_lens.utils import einops
 import logging
 import pickle
 import os
+import contextlib
+from tqdm import tqdm
 
 logger = logging.getLogger("DiffInMeans")
 
@@ -116,6 +118,25 @@ class DiffInMeans(ModelManipulation):
         )
         return model
     
+    def get_last_position_logits(self, model, harmful_toks, harmless_toks, hooks=None) -> torch.Tensor:
+        """Get logits at last position for harmful and harmless inputs."""
+        with model.hooks(hooks) if hooks else contextlib.nullcontext():
+            harmful_logits = model(harmful_toks)
+            harmless_logits = model(harmless_toks)
+        
+        return harmful_logits[:, -1, :], harmless_logits[:, -1, :]
+
+    def kl_div(self, probs_a, probs_b, epsilon=1e-8):
+        """Calculate KL divergence between two probability distributions."""
+        return torch.sum(probs_a * (torch.log(probs_a + epsilon) - torch.log(probs_b + epsilon)), dim=-1).mean()
+
+    def refusal_score(self, logits, refusal_indices, epsilon=1e-8):
+        """Measure tendency to refuse based on refusal token probabilities."""
+        probs = torch.nn.functional.softmax(logits, dim=-1)
+        refusal_probs = torch.sum(probs[:, refusal_indices], dim=-1)
+        nonrefusal_probs = 1.0 - refusal_probs
+        return torch.log(refusal_probs + epsilon) - torch.log(nonrefusal_probs + epsilon)
+
     def fit(self, model_path: str, harmful_prompts: List[str], harmless_prompts: List[str], refit=False) -> str:
         if model_path in self.directions and not refit:
             logger.info(f"Skipping fitting for model {model_path} because it already exists")
@@ -135,22 +156,102 @@ class DiffInMeans(ModelManipulation):
         logger.info(f"Running harmless prompts with cache")
         harmless_logits, harmless_cache = model.run_with_cache(harmless_toks, names_filter=lambda hook_name: 'resid' in hook_name)
         
-        pos = -1
-        layer = 14
-
-        harmful_mean_act = harmful_cache['resid_pre', layer][:, pos, :].mean(dim=0)
-        harmless_mean_act = harmless_cache['resid_pre', layer][:, pos, :].mean(dim=0)
-
-        refusal_dir = harmful_mean_act - harmless_mean_act
-        refusal_dir = refusal_dir / refusal_dir.norm()
+        # Get baseline refusal scores
+        baseline_harmful_logits = harmful_logits[:, -1, :]
+        baseline_harmless_logits = harmless_logits[:, -1, :]
         
-        intervention_dir = refusal_dir
+        # Define refusal tokens (could be customized based on tokenizer)
+        refusal_tokens = ["I'm sorry", "I apologize", "I cannot", "I can't"]
+        refusal_indices = []
+        for token in refusal_tokens:
+            ids = tokenizer.encode(token, add_special_tokens=False)
+            refusal_indices.extend(ids)
+        refusal_indices = list(set(refusal_indices))  # Remove duplicates
         
-        self.directions[model_path] = intervention_dir
+        baseline_refusal_harmful = self.refusal_score(baseline_harmful_logits, refusal_indices).mean()
+        baseline_refusal_harmless = self.refusal_score(baseline_harmless_logits, refusal_indices).mean()
         
-        logger.info(f"Saved direction for model {model_path}")
+        logger.info(f"Baseline refusal score (harmful): {baseline_refusal_harmful:.4f}")
+        logger.info(f"Baseline refusal score (harmless): {baseline_refusal_harmless:.4f}")
+        
+        # Collect candidate directions from multiple positions and layers
+        n_layers = model.cfg.n_layers
+        n_positions = min(5, harmful_toks.shape[1])  # Consider last 5 positions or fewer
+        candidate_positions = list(range(-n_positions, 0))
+        candidate_directions = {}
+        
+        for pos in candidate_positions:
+            for layer in range(n_layers):
+                harmful_act = harmful_cache['resid_pre', layer][:, pos, :].mean(dim=0)
+                harmless_act = harmless_cache['resid_pre', layer][:, pos, :].mean(dim=0)
+                
+                direction = harmful_act - harmless_act
+                direction = direction / (direction.norm() + 1e-8)
+                candidate_directions[(pos, layer)] = direction
+        
+        logger.info(f"Evaluating {len(candidate_directions)} candidate directions")
+        
+        # Evaluate each direction
+        best_direction = None
+        best_score = float('inf')
+        best_pos_layer = None
+        
+        results = []
+        
+        for (pos, layer), direction in tqdm(candidate_directions.items()[:5], total=len(candidate_directions)):
+            hooks = generate_hooks(model, direction)
+            
+            # Evaluate refusal with this direction
+            with model.hooks(hooks):
+                ablated_harmful_logits, _ = model.run_with_cache(harmful_toks, names_filter=lambda hook_name: 'resid' in hook_name)
+                ablated_harmless_logits, _ = model.run_with_cache(harmless_toks, names_filter=lambda hook_name: 'resid' in hook_name)
+            
+            # Calculate refusal scores with direction ablation
+            ablated_refusal_harmful = self.refusal_score(ablated_harmful_logits[:, -1, :], refusal_indices).mean()
+            ablated_refusal_harmless = self.refusal_score(ablated_harmless_logits[:, -1, :], refusal_indices).mean()
+            
+            # Calculate KL divergence for harmless prompts (measures distribution change)
+            baseline_probs = torch.nn.functional.softmax(baseline_harmless_logits, dim=-1)
+            ablated_probs = torch.nn.functional.softmax(ablated_harmless_logits[:, -1, :], dim=-1)
+            kl_divergence = self.kl_div(baseline_probs, ablated_probs)
+            
+            # Compute overall score (lower is better)
+            # We want: low refusal on harmful, unchanged refusal on harmless, low KL divergence
+            overall_score = ablated_refusal_harmful + abs(ablated_refusal_harmless - baseline_refusal_harmless) + kl_divergence
+            
+            results.append({
+                'position': pos,
+                'layer': layer,
+                'harmful_refusal': ablated_refusal_harmful.item(),
+                'harmless_refusal': ablated_refusal_harmless.item(),
+                'kl_divergence': kl_divergence.item(),
+                'overall_score': overall_score.item()
+            })
+            
+            if overall_score < best_score:
+                best_score = overall_score
+                best_direction = direction
+                best_pos_layer = (pos, layer)
+        
+        # Sort results by overall score (lower is better)
+        results.sort(key=lambda x: x['overall_score'])
+        
+        # Log the top 5 directions
+        logger.info("Top 5 directions:")
+        for i, result in enumerate(results[:5]):
+            logger.info(f"#{i+1}: pos={result['position']}, layer={result['layer']}, "
+                       f"score={result['overall_score']:.4f}, "
+                       f"harmful_refusal={result['harmful_refusal']:.4f}, "
+                       f"harmless_refusal={result['harmless_refusal']:.4f}, "
+                       f"kl_div={result['kl_divergence']:.4f}")
+        
+        # Save the best direction
+        pos, layer = best_pos_layer
+        logger.info(f"Selected best direction from position {pos}, layer {layer}")
+        self.directions[model_path] = best_direction
+        
         return self.directions[model_path]
-        
+    
     # def generate(self, model_path: str, inputs: Dict[str, torch.Tensor], **kwargs) -> str:
     #     model = self.load_model(model_path)
     #     hooks = self.model2hooks[model_path]
