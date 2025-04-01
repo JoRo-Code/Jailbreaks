@@ -3,6 +3,8 @@ from jailbreaks.methods.model import DiffInMeans
 d = DiffInMeans()
 
 model_path = "Qwen/Qwen-1_8B-chat"
+model_path = "Qwen/Qwen2-0.5B-Instruct"
+
 
 import requests
 import pandas as pd
@@ -32,5 +34,6 @@ def get_harmless_instructions():
 harmful_prompts = get_advbench_instructions()
 harmless_prompts = get_harmless_instructions()
 
-d.fit(model_path, harmful_prompts[:5], harmless_prompts[:5])
+N = 1
+d.fit(model_path, harmful_prompts[:N], harmless_prompts[:N], refit=True)
 
