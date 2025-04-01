@@ -20,6 +20,9 @@ class PromptInjection(JailBreakMethod):
 class ModelManipulation(JailBreakMethod):
     def __init__(self):
         super().__init__()
+    
+    def apply(self, model: AutoModelForCausalLM, inputs: Dict[str, torch.Tensor], **kwargs) -> str:
+        pass
 
 class GenerationExploit(JailBreakMethod):
     def __init__(self):
