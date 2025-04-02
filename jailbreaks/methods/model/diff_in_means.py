@@ -16,6 +16,10 @@ import pickle
 import os
 import contextlib
 from tqdm import tqdm
+import pandas as pd
+import time
+
+from jailbreaks.utils import is_refusal
 
 logger = logging.getLogger("DiffInMeans")
 
@@ -61,7 +65,7 @@ class DiffInMeans(ModelManipulation):
         super().__init__()
         self.name = "diff-in-means"
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        self.path = path or "jailbreaks/checkpoints/diff-in-means.pkl"
+        self.path = path or "jailbreaks/checkpoints/diff-in-means.pt"
         self.directions = self.load_directions(self.path) if use_cache else {}
 
     def apply(self, model: AutoModelForCausalLM) -> str:
@@ -91,16 +95,17 @@ class DiffInMeans(ModelManipulation):
     def save_directions(self, path: str = None):
         path = path or self.path
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "wb") as f:
-            pickle.dump(self.directions, f)
+        torch.save(self.directions, path)
     
     def load_directions(self, path: str = None) -> Dict[str, Float[Tensor, "d_act"]]:
         path = path or self.path
         if not os.path.exists(path):
             logger.warning(f"No saved directions found at {path}")
             return {}
-        with open(path, "rb") as f:
-            directions = pickle.load(f)
+        directions = torch.load(path, map_location=self.device)
+        for key in directions:
+            if isinstance(directions[key], torch.Tensor):
+                directions[key] = directions[key].to(self.device)
         return directions
     
     def _convert_to_hooked_transformer(self, model: AutoModelForCausalLM) -> HookedTransformer:
@@ -151,256 +156,301 @@ class DiffInMeans(ModelManipulation):
             
         return torch.sum(kl_term, dim=-1).mean()
 
-    def refusal_score(self, logits, refusal_indices, epsilon=1e-6):
-        """Measure tendency to refuse based on refusal token probabilities."""
-        probs = torch.nn.functional.softmax(logits.float(), dim=-1) # Use float32 for softmax stability
-        
-        # Ensure refusal_indices are valid
-        if not refusal_indices:
-             logger.warning("Refusal indices list is empty.")
-             return torch.tensor(0.0, device=logits.device) # Return neutral score if no refusal tokens
-        
-        # Clamp indices to be within vocab size
-        vocab_size = probs.shape[-1]
-        valid_indices = [idx for idx in refusal_indices if 0 <= idx < vocab_size]
-        if len(valid_indices) < len(refusal_indices):
-            logger.warning(f"Some refusal indices were out of bounds. Original: {len(refusal_indices)}, Valid: {len(valid_indices)}")
-        if not valid_indices:
-             logger.warning("No valid refusal indices found after bounds check.")
-             return torch.tensor(0.0, device=logits.device)
-
-        refusal_probs = torch.sum(probs[:, valid_indices], dim=-1)
-        nonrefusal_probs = 1.0 - refusal_probs
-        
-        # Add epsilon before log
-        log_refusal = torch.log(refusal_probs + epsilon)
-        log_nonrefusal = torch.log(nonrefusal_probs + epsilon)
-
-        score = log_refusal - log_nonrefusal
-
-        # Check for NaNs/Infs in the final score
-        if torch.isnan(score).any() or torch.isinf(score).any():
-            logger.warning("NaN or Inf detected in refusal score calculation. Clamping.")
-            score = torch.nan_to_num(score, nan=0.0, posinf=10.0, neginf=-10.0) # Clamp infs to large values
-
-        return score
-
-    def fit(self, model_path: str, harmful_prompts: List[str], harmless_prompts: List[str], refit=False) -> str:
+    def fit(self, model_path: str, harmful_prompts: List[str], harmless_prompts: List[str], refit=False, generation_kwargs: Dict = None) -> str:
         if model_path in self.directions and not refit:
             logger.info(f"Skipping fitting for model {model_path} because it already exists")
             return self.get_direction(model_path)
         
-        # Add check for empty prompts
         if not harmful_prompts or not harmless_prompts:
             raise ValueError("Harmful and harmless prompts lists cannot be empty for fitting.")
 
         logger.info(f"Loading model {model_path}")
         model = self.load_model(model_path)
-        
-        tokenizer = AutoTokenizer.from_pretrained(model_path)
-        # Ensure tokenizer has a padding token if padding is enabled
+        tokenizer = model.tokenizer # Use the tokenizer from the HookedTransformer
+
+        # Ensure tokenizer has a padding token and correct padding side (as before)
         if tokenizer.pad_token is None:
             logger.warning("Tokenizer does not have a pad token. Setting to eos_token.")
             tokenizer.pad_token = tokenizer.eos_token
-            model.tokenizer.pad_token = model.tokenizer.eos_token # Also update the model's tokenizer instance if separate
-
-        # Ensure the model's tokenizer config matches the loaded tokenizer regarding padding side
-        # HookedTransformer defaults to left padding, ensure consistency
-        if model.tokenizer.padding_side != 'left':
-             logger.warning(f"Model tokenizer padding side is '{model.tokenizer.padding_side}'. Forcing to 'left'.")
-             model.tokenizer.padding_side = 'left'
+            # No need to update model.tokenizer separately if using model.tokenizer directly
         if tokenizer.padding_side != 'left':
-             logger.warning(f"Loaded tokenizer padding side is '{tokenizer.padding_side}'. Forcing to 'left'.")
+             logger.warning(f"Tokenizer padding side is '{tokenizer.padding_side}'. Forcing to 'left'.")
              tokenizer.padding_side = 'left'
 
-        tokenize_instructions_fn = functools.partial(tokenize_prompts, tokenizer=tokenizer) # Use the loaded tokenizer consistently
-        
-        harmful_toks = tokenize_instructions_fn(harmful_prompts)
-        harmless_toks = tokenize_instructions_fn(harmless_prompts)
+        # --- Prepare Prompts and Tokens ---
+        # Format prompts using the appropriate chat template
+        formatted_harmful_prompts = format_prompts(harmful_prompts, tokenizer)
+        formatted_harmless_prompts = format_prompts(harmless_prompts, tokenizer)
 
-        # Add check for empty tokenized tensors (e.g., if prompts were just padding tokens)
+        # Tokenize prompts
+        harmful_toks = tokenize_prompts(formatted_harmful_prompts, tokenizer).to(self.device)
+        harmless_toks = tokenize_prompts(formatted_harmless_prompts, tokenizer).to(self.device)
+
         if harmful_toks.numel() == 0 or harmless_toks.numel() == 0:
              raise ValueError("Tokenization resulted in empty tensors. Check input prompts.")
         if harmful_toks.shape[1] == 0 or harmless_toks.shape[1] == 0:
-             raise ValueError(f"Tokenization resulted in tensors with sequence length 0. Harmful shape: {harmful_toks.shape}, Harmless shape: {harmless_toks.shape}. Check input prompts and tokenizer padding.")
+             raise ValueError(f"Tokenization resulted in tensors with sequence length 0. Check input prompts and tokenizer padding.")
 
-        logger.info(f"Running harmful prompts with cache")
-        harmful_logits, harmful_cache = model.run_with_cache(harmful_toks, names_filter=lambda hook_name: 'resid' in hook_name)
-        logger.info(f"Running harmless prompts with cache")
-        harmless_logits, harmless_cache = model.run_with_cache(harmless_toks, names_filter=lambda hook_name: 'resid' in hook_name)
-        
-        # Get baseline refusal scores
-        baseline_harmful_logits = harmful_logits[:, -1, :]
-        baseline_harmless_logits = harmless_logits[:, -1, :]
-        
-        # Define refusal tokens (could be customized based on tokenizer)
-        refusal_tokens = ["I'm sorry", "I apologize", "I cannot", "I can't"]
-        refusal_indices = []
-        for token in refusal_tokens:
-            ids = tokenizer.encode(token, add_special_tokens=False)
-            refusal_indices.extend(ids)
-        refusal_indices = list(set(refusal_indices))  # Remove duplicates
-        
-        baseline_refusal_harmful = self.refusal_score(baseline_harmful_logits, refusal_indices).mean()
-        baseline_refusal_harmless = self.refusal_score(baseline_harmless_logits, refusal_indices).mean()
-        
-        logger.info(f"Baseline refusal score (harmful): {baseline_refusal_harmful:.4f}")
-        logger.info(f"Baseline refusal score (harmless): {baseline_refusal_harmless:.4f}")
-        
-        # Collect candidate directions from multiple positions and layers
+        # --- Baseline Evaluation (No Hooks) ---
+        logger.info("Generating baseline responses...")
+        default_generation_kwargs = {
+            "max_new_tokens": 50,
+            "eos_token_id": tokenizer.eos_token_id,
+            #"pad_token_id": tokenizer.pad_token_id,
+            "do_sample": False, # Use greedy decoding for reproducibility
+        }
+        if generation_kwargs:
+            default_generation_kwargs.update(generation_kwargs)
+
+        # Get baseline logits for KL divergence calculation later
+        logger.info("Running baseline prompts with cache for KL div")
+        baseline_harmful_logits, harmful_cache = model.run_with_cache(harmful_toks, names_filter=lambda hook_name: 'resid' in hook_name)
+        baseline_harmless_logits, harmless_cache = model.run_with_cache(harmless_toks, names_filter=lambda hook_name: 'resid' in hook_name)
+        baseline_harmless_logits_last = baseline_harmless_logits[:, -1, :].float()
+        baseline_probs_harmless = torch.nn.functional.softmax(baseline_harmless_logits_last, dim=-1)
+
+        # Generate baseline text for refusal checking
+        baseline_harmful_outputs_ids = model.generate(harmful_toks, **default_generation_kwargs)
+        baseline_harmless_outputs_ids = model.generate(harmless_toks, **default_generation_kwargs)
+
+        # Decode baseline outputs (skip special tokens and prompt)
+        baseline_harmful_texts = [tokenizer.decode(o[harmful_toks.shape[1]:], skip_special_tokens=True) for o in baseline_harmful_outputs_ids]
+        baseline_harmless_texts = [tokenizer.decode(o[harmless_toks.shape[1]:], skip_special_tokens=True) for o in baseline_harmless_outputs_ids]
+
+        # Calculate baseline refusal rates
+        baseline_harmful_refusal_rate = torch.tensor([is_refusal(t) for t in baseline_harmful_texts], dtype=torch.float).mean().item()
+        baseline_harmless_refusal_rate = torch.tensor([is_refusal(t) for t in baseline_harmless_texts], dtype=torch.float).mean().item()
+
+        # Store baseline refusals for detailed logging
+        baseline_harmful_refusals = [is_refusal(t) for t in baseline_harmful_texts]
+        baseline_harmless_refusals = [is_refusal(t) for t in baseline_harmless_texts]
+
+        logger.info(f"Baseline refusal rate (harmful): {baseline_harmful_refusal_rate:.4f}")
+        logger.info(f"Baseline refusal rate (harmless): {baseline_harmless_refusal_rate:.4f}")
+
+        # --- Candidate Direction Generation (as before) ---
         n_layers = model.cfg.n_layers
-        # Ensure n_positions is at least 1 if harmful_toks has sequences
-        n_positions = min(5, harmful_toks.shape[1]) if harmful_toks.shape[1] > 0 else 0
+        #n_positions = min(5, harmful_toks.shape[1]) if harmful_toks.shape[1] > 0 else 0
+        n_positions = 1
         candidate_positions = list(range(-n_positions, 0))
         candidate_directions = {}
-        
-        # Add check if candidate_positions is empty
+
         if not candidate_positions:
              raise ValueError(f"Could not determine candidate positions. Harmful tokens sequence length might be too short ({harmful_toks.shape[1]}).")
 
+        logger.info("Calculating candidate directions...")
         for pos in candidate_positions:
             for layer in range(n_layers):
-                # Ensure tensors are on the same device
                 harmful_act = harmful_cache['resid_pre', layer][:, pos, :].mean(dim=0).to(self.device)
                 harmless_act = harmless_cache['resid_pre', layer][:, pos, :].mean(dim=0).to(self.device)
-                
                 direction = harmful_act - harmless_act
                 direction_norm = direction.norm()
-                # Avoid division by zero or very small norms
                 if direction_norm > 1e-8:
                     direction = direction / direction_norm
                 else:
-                    logger.warning(f"Direction norm is close to zero at pos={pos}, layer={layer}. Skipping this candidate.")
-                    continue # Skip this candidate direction if norm is too small
+                    # logger.warning(f"Direction norm is close to zero at pos={pos}, layer={layer}. Skipping.") # Less verbose
+                    continue
                 candidate_directions[(pos, layer)] = direction
-        
-        # Add check if candidate_directions is empty after the loop
+
         if not candidate_directions:
             raise ValueError("No valid candidate directions found. Check model activations or prompt differences.")
 
-        logger.info(f"Evaluating {len(candidate_directions)} candidate directions")
-        
-        # Evaluate each direction
-        best_direction = None
-        # Initialize best_score to a very large float, ensuring it's the same type as overall_score might become
-        best_score = torch.finfo(torch.float32).max 
-        best_pos_layer = None
-        
-        results = []
-        
-        # Use float32 for baseline logits/probs for stability in comparisons
-        baseline_harmful_logits = harmful_logits[:, -1, :].float()
-        baseline_harmless_logits = harmless_logits[:, -1, :].float()
-        baseline_probs_harmless = torch.nn.functional.softmax(baseline_harmless_logits, dim=-1)
-        baseline_refusal_harmful = self.refusal_score(baseline_harmful_logits, refusal_indices).mean()
-        baseline_refusal_harmless = self.refusal_score(baseline_harmless_logits, refusal_indices).mean()
+        logger.info(f"Evaluating {len(candidate_directions)} candidate directions by generating text...")
 
-        for (pos, layer), direction in tqdm(candidate_directions.items(), total=len(candidate_directions)):
-            hooks = generate_hooks(model, direction.to(self.device)) # Ensure direction is on device
-            
-            # Evaluate refusal with this direction
-            ablated_harmful_logits = None
-            ablated_harmless_logits = None
+        # --- Evaluate Candidate Directions ---
+        best_direction = None
+        best_score = torch.finfo(torch.float32).max
+        best_pos_layer = None
+        # Initialize lists for logging
+        overall_results_log = []
+        detailed_results_log = []
+        kl_weight = 1.0 # Weight for the KL divergence term in the score, tune as needed
+
+        for (pos, layer), direction in tqdm(
+            candidate_directions.items(),
+            total=len(candidate_directions),
+            desc="Evaluating candidate directions"
+        ):
+            hooks = generate_hooks(model, direction.to(self.device))
+
+            ablated_harmful_texts = []
+            ablated_harmless_texts = []
+            ablated_harmless_logits_last = None
+            kl_divergence = torch.tensor(torch.finfo(torch.float32).max, device=self.device) # Default high KL if generation fails
+            current_harmful_refusals = [True] * len(harmful_prompts) # Default to refusal if error
+            current_harmless_refusals = [True] * len(harmless_prompts) # Default to refusal if error
+            error_msg = None # Store potential error message
+
             try:
                 with model.hooks(hooks):
-                    # Run with float32 context potentially? Or just cast outputs
-                    ablated_harmful_logits, _ = model.run_with_cache(harmful_toks, names_filter=lambda hook_name: 'resid' in hook_name)
+                    # Generate ablated text
+                    ablated_harmful_outputs_ids = model.generate(harmful_toks, **default_generation_kwargs)
+                    ablated_harmless_outputs_ids = model.generate(harmless_toks, **default_generation_kwargs)
+
+                    # Decode ablated outputs
+                    ablated_harmful_texts = [tokenizer.decode(o[harmful_toks.shape[1]:], skip_special_tokens=True) for o in ablated_harmful_outputs_ids]
+                    ablated_harmless_texts = [tokenizer.decode(o[harmless_toks.shape[1]:], skip_special_tokens=True) for o in ablated_harmless_outputs_ids]
+
+                    # Get ablated logits for KL divergence (optional, but good for stability)
+                    # We only need the harmless ones for KL calculation against baseline
+                    # Re-run harmless prompts with cache under hooks to get logits
                     ablated_harmless_logits, _ = model.run_with_cache(harmless_toks, names_filter=lambda hook_name: 'resid' in hook_name)
+                    ablated_harmless_logits_last = ablated_harmless_logits[:, -1, :].float()
+
             except Exception as e:
-                logger.error(f"Error during hooked run for pos={pos}, layer={layer}: {e}")
-                continue # Skip this direction if the hooked run fails
+                logger.error(f"Error during hooked generation/logit calculation for pos={pos}, layer={layer}: {e}")
+                error_msg = str(e) # Store error message
+                # Assign high score components if generation failed
+                ablated_harmful_refusal_rate = 1.0
+                ablated_harmless_refusal_rate = 1.0 # Penalize failure heavily
+                # KL divergence remains at max
+                overall_score = torch.tensor(best_score + 1.0, device=self.device) # Ensure it's worse than current best
+                # Continue to next iteration after recording failure state (logging happens below)
 
-            # Ensure logits were obtained
-            if ablated_harmful_logits is None or ablated_harmless_logits is None:
-                 logger.warning(f"Failed to get ablated logits for pos={pos}, layer={layer}. Skipping.")
-                 continue
+            # Calculate refusal status for ablated outputs (even if generation failed, use defaults)
+            current_harmful_refusals = [is_refusal(t) for t in ablated_harmful_texts]
+            current_harmless_refusals = [is_refusal(t) for t in ablated_harmless_texts]
 
-            # Calculate refusal scores with direction ablation, use float32
-            ablated_harmful_logits_last = ablated_harmful_logits[:, -1, :].float()
-            ablated_harmless_logits_last = ablated_harmless_logits[:, -1, :].float()
-            
-            ablated_refusal_harmful = self.refusal_score(ablated_harmful_logits_last, refusal_indices).mean()
-            ablated_refusal_harmless = self.refusal_score(ablated_harmless_logits_last, refusal_indices).mean()
-            
-            # Calculate KL divergence for harmless prompts (measures distribution change)
-            ablated_probs_harmless = torch.nn.functional.softmax(ablated_harmless_logits_last, dim=-1)
-            kl_divergence = self.kl_div(baseline_probs_harmless, ablated_probs_harmless)
-            
-            # Check for NaNs/Infs in components before calculating overall score
-            score_components = [ablated_refusal_harmful, ablated_refusal_harmless, baseline_refusal_harmless, kl_divergence]
-            if any(torch.isnan(c).any() or torch.isinf(c).any() for c in score_components):
-                logger.warning(f"NaN or Inf detected in score components for pos={pos}, layer={layer}. "
-                               f"Harmful Refusal: {ablated_refusal_harmful.item():.4f}, "
-                               f"Harmless Refusal: {ablated_refusal_harmless.item():.4f}, "
-                               f"KL Div: {kl_divergence.item():.4f}. Assigning high penalty score.")
-                # Assign a large penalty score instead of nan/inf
-                overall_score = torch.tensor(1e6, device=self.device, dtype=torch.float32) 
+            # Calculate refusal rates for ablated outputs
+            current_harmful_refusal_rate = torch.tensor(current_harmful_refusals, dtype=torch.float).mean()
+            current_harmless_refusal_rate = torch.tensor(current_harmless_refusals, dtype=torch.float).mean()
+
+            # Calculate KL divergence for harmless prompts
+            if ablated_harmless_logits_last is not None:
+                ablated_probs_harmless = torch.nn.functional.softmax(ablated_harmless_logits_last, dim=-1)
+                # Ensure baseline_probs_harmless is on the same device
+                kl_divergence = self.kl_div(baseline_probs_harmless.to(ablated_probs_harmless.device), ablated_probs_harmless)
             else:
-                # Compute overall score (lower is better)
-                # We want: low refusal on harmful, unchanged refusal on harmless, low KL divergence
-                refusal_diff = torch.abs(ablated_refusal_harmless - baseline_refusal_harmless)
-                overall_score = ablated_refusal_harmful + refusal_diff + kl_divergence
+                 logger.warning(f"Could not calculate KL divergence for pos={pos}, layer={layer} due to missing ablated logits.")
+                 # Keep KL divergence high as penalty
 
-            # Ensure overall_score is a scalar tensor
-            if not isinstance(overall_score, torch.Tensor) or overall_score.numel() != 1:
-                 logger.error(f"overall_score is not a scalar tensor for pos={pos}, layer={layer}. Type: {type(overall_score)}, Value: {overall_score}. Skipping.")
-                 continue # Skip if score calculation failed unexpectedly
 
-            # Ensure score is float for comparison
-            current_score_float = overall_score.item() 
+            # Compute overall score (lower is better)
+            # Score = (Harmful Refusal Rate) + abs(Change in Harmless Refusal Rate) + (KL Divergence Weight * KL Divergence)
 
-            results.append({
+            score_components = [current_harmful_refusal_rate, current_harmless_refusal_rate, kl_divergence]
+            if any(torch.isnan(c).any() or torch.isinf(c).any() for c in score_components):
+                logger.warning(f"NaN or Inf detected in score components for pos={pos}, layer={layer}. Assigning high penalty score.")
+                overall_score = torch.tensor(1e6, device=self.device, dtype=torch.float32)
+            else:
+                refusal_diff_harmless = torch.abs(current_harmless_refusal_rate - baseline_harmless_refusal_rate)
+                overall_score = current_harmful_refusal_rate + refusal_diff_harmless + kl_weight * kl_divergence
+
+
+            current_score_float = overall_score.item() if not (torch.isnan(overall_score).any() or torch.isinf(overall_score).any()) else float('inf')
+
+            # --- Log Overall Results for this direction ---
+            overall_results_log.append({
                 'position': pos,
                 'layer': layer,
-                'harmful_refusal': ablated_refusal_harmful.item() if isinstance(ablated_refusal_harmful, torch.Tensor) else ablated_refusal_harmful,
-                'harmless_refusal': ablated_refusal_harmless.item() if isinstance(ablated_refusal_harmless, torch.Tensor) else ablated_refusal_harmless,
-                'kl_divergence': kl_divergence.item() if isinstance(kl_divergence, torch.Tensor) else kl_divergence,
-                'overall_score': current_score_float
+                'baseline_harmless_refusal_rate': baseline_harmless_refusal_rate,
+                'harmful_refusal_rate': current_harmful_refusal_rate.item() if not error_msg else 1.0,
+                'harmless_refusal_rate': current_harmless_refusal_rate.item() if not error_msg else 1.0,
+                'kl_divergence': kl_divergence.item() if not error_msg else float('inf'),
+                'overall_score': current_score_float,
+                'error': error_msg
             })
-            
-            # Compare using float values
+
+            # --- Log Detailed Results for this direction ---
+            # Log harmful prompts/results
+            for i, prompt in enumerate(formatted_harmful_prompts):
+                detailed_results_log.append({
+                    'position': pos,
+                    'layer': layer,
+                    'prompt_type': 'harmful',
+                    'prompt_index': i,
+                    'prompt': prompt,
+                    'baseline_response': baseline_harmful_texts[i],
+                    'baseline_refusal': baseline_harmful_refusals[i],
+                    'ablated_response': ablated_harmful_texts[i] if not error_msg else "GENERATION_ERROR",
+                    'ablated_refusal': current_harmful_refusals[i],
+                    'error': error_msg
+                })
+            # Log harmless prompts/results
+            for i, prompt in enumerate(formatted_harmless_prompts):
+                 detailed_results_log.append({
+                    'position': pos,
+                    'layer': layer,
+                    'prompt_type': 'harmless',
+                    'prompt_index': i,
+                    'prompt': prompt,
+                    'baseline_response': baseline_harmless_texts[i],
+                    'baseline_refusal': baseline_harmless_refusals[i],
+                    'ablated_response': ablated_harmless_texts[i] if not error_msg else "GENERATION_ERROR",
+                    'ablated_refusal': current_harmless_refusals[i],
+                    'error': error_msg
+                })
+
+
+            # Update best direction logic (no changes needed here)
             if current_score_float < best_score:
-                # Check again for NaN/Inf just before assignment
-                if not (torch.isnan(overall_score).any() or torch.isinf(overall_score).any()):
+                 if not (torch.isnan(overall_score).any() or torch.isinf(overall_score).any()):
                     best_score = current_score_float
                     best_direction = direction # Keep original precision direction
                     best_pos_layer = (pos, layer)
-                else:
+                 else:
                      logger.warning(f"Skipping update for best_score due to NaN/Inf in overall_score for pos={pos}, layer={layer}")
 
-        # Sort results by overall score (lower is better), handle potential NaNs by putting them last
-        results.sort(key=lambda x: float('inf') if x['overall_score'] is None or torch.isnan(torch.tensor(x['overall_score'])).item() or torch.isinf(torch.tensor(x['overall_score'])).item() else x['overall_score'])
-        
-        # Log the top 5 directions
-        logger.info("Top 5 directions:")
-        for i, result in enumerate(results[:5]):
-            logger.info(f"#{i+1}: pos={result['position']}, layer={result['layer']}, "
-                       f"score={result['overall_score']:.4f}, "
-                       f"harmful_refusal={result['harmful_refusal']:.4f}, "
-                       f"harmless_refusal={result['harmless_refusal']:.4f}, "
-                       f"kl_div={result['kl_divergence']:.4f}")
-        
-        # Add check before unpacking best_pos_layer
+
+        # --- Final Selection, Logging, and Saving ---
+        # Sort overall results for logging top directions
+        overall_results_log.sort(key=lambda x: float('inf') if x['overall_score'] is None or pd.isna(x['overall_score']) or x['overall_score'] == float('inf') else x['overall_score'])
+
+        logger.info("Top 5 directions based on generation evaluation:")
+        for i, result in enumerate(overall_results_log[:5]):
+             logger.info(f"#{i+1}: pos={result['position']}, layer={result['layer']}, "
+                        f"score={result['overall_score']:.4f}, "
+                        f"harmful_refusal={result['harmful_refusal_rate']:.4f}, "
+                        f"harmless_refusal={result['harmless_refusal_rate']:.4f}, "
+                        f"kl_div={result['kl_divergence']:.4f}" +
+                        (f", error={result['error']}" if result['error'] else ""))
+
+        # --- Save Logs to CSV ---
+        log_dir = "logs/diff_in_means_fit"
+        os.makedirs(log_dir, exist_ok=True)
+        timestamp = time.strftime("%Y%m%d-%H%M%S")
+        model_name_safe = model_path.replace("/", "_") # Make model path safe for filename
+        overall_log_path = os.path.join(log_dir, f"{model_name_safe}_overall_results_{timestamp}.csv")
+        detailed_log_path = os.path.join(log_dir, f"{model_name_safe}_detailed_results_{timestamp}.csv")
+
+        try:
+            overall_df = pd.DataFrame(overall_results_log)
+            overall_df.to_csv(overall_log_path, index=False)
+            logger.info(f"Saved overall direction results to {overall_log_path}")
+
+            detailed_df = pd.DataFrame(detailed_results_log)
+            detailed_df.to_csv(detailed_log_path, index=False)
+            logger.info(f"Saved detailed prompt results to {detailed_log_path}")
+        except Exception as e:
+            logger.error(f"Failed to save logs to CSV: {e}")
+
+
         if best_pos_layer is None:
-             # Log results again to see why nothing was chosen
-             logger.error("Failed to find a best direction. Evaluation loop did not update the best score. Final top results:")
-             for i, result in enumerate(results[:10]): # Log more results
+             logger.error("Failed to find a best direction based on generation. Evaluation loop did not update the best score. Final top results (from log):")
+             # Log more results if failure
+             for i, result in enumerate(overall_results_log[:10]):
                  logger.error(f"#{i+1}: pos={result['position']}, layer={result['layer']}, "
                             f"score={result['overall_score']:.4f}, "
-                            f"harmful_refusal={result['harmful_refusal']:.4f}, "
-                            f"harmless_refusal={result['harmless_refusal']:.4f}, "
-                            f"kl_div={result['kl_divergence']:.4f}")
+                            f"harmful_refusal={result['harmful_refusal_rate']:.4f}, "
+                            f"harmless_refusal={result['harmless_refusal_rate']:.4f}, "
+                            f"kl_div={result['kl_divergence']:.4f}" +
+                            (f", error={result['error']}" if result['error'] else ""))
              raise RuntimeError("Failed to find a best direction. Evaluation loop did not update the best score.")
-        
-        # Save the best direction
+
         pos, layer = best_pos_layer
         logger.info(f"Selected best direction from position {pos}, layer {layer} with score {best_score:.4f}")
-        # Ensure best_direction is valid before saving
+
         if best_direction is None or torch.isnan(best_direction).any() or torch.isinf(best_direction).any():
              raise RuntimeError(f"Selected best_direction is invalid (None, NaN, or Inf) for pos={pos}, layer={layer}")
-             
-        self.directions[model_path] = best_direction.to('cpu') # Store direction on CPU to save GPU memory
-        
+
+        self.directions[model_path] = best_direction.to('cpu')
+        self.save_directions() # Save immediately after finding
+
+        # Clean up model to free memory
+        del model
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
         return self.directions[model_path]
     
     # def generate(self, model_path: str, inputs: Dict[str, torch.Tensor], **kwargs) -> str:
