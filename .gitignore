@@ -13,3 +13,5 @@ results/
 *.ipynb_checkpoints/
 
 checkpoints/
+
+data/
