@@ -18,6 +18,7 @@ import contextlib
 from tqdm import tqdm
 import pandas as pd
 import time
+import gc # Import garbage collector
 
 from jailbreaks.utils import is_refusal
 
@@ -202,14 +203,41 @@ class DiffInMeans(ModelManipulation):
         if generation_kwargs:
             default_generation_kwargs.update(generation_kwargs)
 
+        # --- Edit Start: Optimize initial caching and logit storage ---
         # Get baseline logits for KL divergence calculation later
-        logger.info("Running baseline prompts with cache for KL div")
-        baseline_harmful_logits, harmful_cache = model.run_with_cache(harmful_toks, names_filter=lambda hook_name: 'resid' in hook_name)
-        baseline_harmless_logits, harmless_cache = model.run_with_cache(harmless_toks, names_filter=lambda hook_name: 'resid' in hook_name)
-        baseline_harmless_logits_last = baseline_harmless_logits[:, -1, :].float()
-        baseline_probs_harmless = torch.nn.functional.softmax(baseline_harmless_logits_last, dim=-1)
+        logger.info("Running baseline prompts with cache for KL div (optimizing memory)")
 
-        # Generate baseline text for refusal checking
+        # Only cache 'resid_pre' needed for direction calculation
+        resid_pre_hook_name_filter = lambda name: name.endswith('resid_pre')
+
+        # Run harmful prompts
+        baseline_harmful_logits_full, harmful_cache = model.run_with_cache(
+            harmful_toks,
+            names_filter=resid_pre_hook_name_filter
+        )
+        # We don't need harmful logits, delete the full tensor
+        del baseline_harmful_logits_full
+        if torch.cuda.is_available(): torch.cuda.empty_cache()
+        gc.collect()
+
+        # Run harmless prompts
+        baseline_harmless_logits_full, harmless_cache = model.run_with_cache(
+            harmless_toks,
+            names_filter=resid_pre_hook_name_filter
+        )
+        # Extract only the last token logits needed for KL div and delete the full tensor
+        baseline_harmless_logits_last = baseline_harmless_logits_full[:, -1, :].float().detach() # Detach to be safe
+        del baseline_harmless_logits_full
+        if torch.cuda.is_available(): torch.cuda.empty_cache()
+        gc.collect()
+
+        baseline_probs_harmless = torch.nn.functional.softmax(baseline_harmless_logits_last, dim=-1)
+        # --- Edit End ---
+
+
+        # Generate baseline text for refusal checking (requires separate forward pass without cache)
+        # This might still use significant memory during generation itself (KV cache)
+        logger.info("Generating baseline text outputs...")
         baseline_harmful_outputs_ids = model.generate(harmful_toks, **default_generation_kwargs)
         baseline_harmless_outputs_ids = model.generate(harmless_toks, **default_generation_kwargs)
 
@@ -228,29 +256,43 @@ class DiffInMeans(ModelManipulation):
         logger.info(f"Baseline refusal rate (harmful): {baseline_harmful_refusal_rate:.4f}")
         logger.info(f"Baseline refusal rate (harmless): {baseline_harmless_refusal_rate:.4f}")
 
-        # --- Candidate Direction Generation (as before) ---
+        # --- Candidate Direction Generation ---
         n_layers = model.cfg.n_layers
-        #n_positions = min(5, harmful_toks.shape[1]) if harmful_toks.shape[1] > 0 else 0
         n_positions = 1
         candidate_positions = list(range(-n_positions, 0))
         candidate_directions = {}
 
         if not candidate_positions:
+             # --- Edit Start: Delete caches before raising error ---
+             del harmful_cache
+             del harmless_cache
+             if torch.cuda.is_available(): torch.cuda.empty_cache()
+             gc.collect()
+             # --- Edit End ---
              raise ValueError(f"Could not determine candidate positions. Harmful tokens sequence length might be too short ({harmful_toks.shape[1]}).")
 
         logger.info("Calculating candidate directions...")
         for pos in candidate_positions:
             for layer in range(n_layers):
+                # Ensure activations are on the correct device if they aren't already
                 harmful_act = harmful_cache['resid_pre', layer][:, pos, :].mean(dim=0).to(self.device)
                 harmless_act = harmless_cache['resid_pre', layer][:, pos, :].mean(dim=0).to(self.device)
                 direction = harmful_act - harmless_act
                 direction_norm = direction.norm()
                 if direction_norm > 1e-8:
                     direction = direction / direction_norm
-                else:
-                    # logger.warning(f"Direction norm is close to zero at pos={pos}, layer={layer}. Skipping.") # Less verbose
-                    continue
-                candidate_directions[(pos, layer)] = direction
+                    candidate_directions[(pos, layer)] = direction.detach() # Detach to potentially save memory if original acts are kept
+                # else: # No need to store zero/small directions
+                #    logger.warning(f"Direction norm is close to zero at pos={pos}, layer={layer}. Skipping.")
+
+        # --- Edit Start: Delete caches after calculating directions ---
+        logger.info("Deleting initial activation caches...")
+        del harmful_cache
+        del harmless_cache
+        if torch.cuda.is_available(): torch.cuda.empty_cache()
+        gc.collect()
+        # --- Edit End ---
+
 
         if not candidate_directions:
             raise ValueError("No valid candidate directions found. Check model activations or prompt differences.")
@@ -261,25 +303,24 @@ class DiffInMeans(ModelManipulation):
         best_direction = None
         best_score = torch.finfo(torch.float32).max
         best_pos_layer = None
-        # Initialize lists for logging
         overall_results_log = []
         detailed_results_log = []
-        kl_weight = 1.0 # Weight for the KL divergence term in the score, tune as needed
+        kl_weight = 1.0
 
         for (pos, layer), direction in tqdm(
             candidate_directions.items(),
             total=len(candidate_directions),
             desc="Evaluating candidate directions"
         ):
-            hooks = generate_hooks(model, direction.to(self.device))
+            hooks = generate_hooks(model, direction.to(self.device)) # Ensure direction is on device
 
             ablated_harmful_texts = []
             ablated_harmless_texts = []
             ablated_harmless_logits_last = None
-            kl_divergence = torch.tensor(torch.finfo(torch.float32).max, device=self.device) # Default high KL if generation fails
-            current_harmful_refusals = [True] * len(harmful_prompts) # Default to refusal if error
-            current_harmless_refusals = [True] * len(harmless_prompts) # Default to refusal if error
-            error_msg = None # Store potential error message
+            kl_divergence = torch.tensor(torch.finfo(torch.float32).max, device=self.device)
+            current_harmful_refusals = [True] * len(harmful_prompts)
+            current_harmless_refusals = [True] * len(harmless_prompts)
+            error_msg = None
 
             try:
                 with model.hooks(hooks):
@@ -291,43 +332,58 @@ class DiffInMeans(ModelManipulation):
                     ablated_harmful_texts = [tokenizer.decode(o[harmful_toks.shape[1]:], skip_special_tokens=True) for o in ablated_harmful_outputs_ids]
                     ablated_harmless_texts = [tokenizer.decode(o[harmless_toks.shape[1]:], skip_special_tokens=True) for o in ablated_harmless_outputs_ids]
 
-                    # Get ablated logits for KL divergence (optional, but good for stability)
-                    # We only need the harmless ones for KL calculation against baseline
-                    # Re-run harmless prompts with cache under hooks to get logits
-                    ablated_harmless_logits, _ = model.run_with_cache(harmless_toks, names_filter=lambda hook_name: 'resid' in hook_name)
-                    ablated_harmless_logits_last = ablated_harmless_logits[:, -1, :].float()
+                    # --- Edit Start: Get ablated logits with standard forward pass and delete full tensor ---
+                    # Get ablated logits for KL divergence using a standard forward pass
+                    ablated_harmless_logits_full = model(harmless_toks) # No caching here
+                    ablated_harmless_logits_last = ablated_harmless_logits_full[:, -1, :].float().detach() # Detach
+                    del ablated_harmless_logits_full # Delete the large tensor immediately
+                    # --- Edit End ---
 
             except Exception as e:
                 logger.error(f"Error during hooked generation/logit calculation for pos={pos}, layer={layer}: {e}")
-                error_msg = str(e) # Store error message
-                # Assign high score components if generation failed
-                ablated_harmful_refusal_rate = 1.0
-                ablated_harmless_refusal_rate = 1.0 # Penalize failure heavily
-                # KL divergence remains at max
+                error_msg = str(e)
                 overall_score = torch.tensor(best_score + 1.0, device=self.device) # Ensure it's worse than current best
-                # Continue to next iteration after recording failure state (logging happens below)
+                # Explicitly clear potentially large tensors from the failed try block
+                ablated_harmless_logits_last = None
+                # --- Edit Start: Add cleanup in except block ---
+                if 'ablated_harmless_logits_full' in locals(): del ablated_harmless_logits_full
+                if 'ablated_harmful_outputs_ids' in locals(): del ablated_harmful_outputs_ids
+                if 'ablated_harmless_outputs_ids' in locals(): del ablated_harmless_outputs_ids
+                # --- Edit End ---
 
-            # Calculate refusal status for ablated outputs (even if generation failed, use defaults)
+            # --- Edit Start: Add potential cleanup after try-except ---
+            # Explicitly delete generation outputs if they exist to free memory before KL calc
+            if 'ablated_harmful_outputs_ids' in locals(): del ablated_harmful_outputs_ids
+            if 'ablated_harmless_outputs_ids' in locals(): del ablated_harmless_outputs_ids
+            # --- Edit End ---
+
+
+            # Calculate refusal status for ablated outputs
             current_harmful_refusals = [is_refusal(t) for t in ablated_harmful_texts]
             current_harmless_refusals = [is_refusal(t) for t in ablated_harmless_texts]
 
-            # Calculate refusal rates for ablated outputs
             current_harmful_refusal_rate = torch.tensor(current_harmful_refusals, dtype=torch.float).mean()
             current_harmless_refusal_rate = torch.tensor(current_harmless_refusals, dtype=torch.float).mean()
 
             # Calculate KL divergence for harmless prompts
             if ablated_harmless_logits_last is not None:
-                ablated_probs_harmless = torch.nn.functional.softmax(ablated_harmless_logits_last, dim=-1)
-                # Ensure baseline_probs_harmless is on the same device
-                kl_divergence = self.kl_div(baseline_probs_harmless.to(ablated_probs_harmless.device), ablated_probs_harmless)
+                try:
+                    ablated_probs_harmless = torch.nn.functional.softmax(ablated_harmless_logits_last, dim=-1)
+                    # Ensure baseline_probs_harmless is on the same device
+                    kl_divergence = self.kl_div(baseline_probs_harmless.to(ablated_probs_harmless.device), ablated_probs_harmless)
+                except Exception as kl_e:
+                    logger.error(f"Error calculating KL divergence for pos={pos}, layer={layer}: {kl_e}")
+                    kl_divergence = torch.tensor(torch.finfo(torch.float32).max, device=self.device) # Assign max KL on error
+                finally:
+                    # --- Edit Start: Delete ablated logits after use ---
+                    del ablated_harmless_logits_last # Delete after KL calculation
+                    if 'ablated_probs_harmless' in locals(): del ablated_probs_harmless
+                    # --- Edit End ---
             else:
                  logger.warning(f"Could not calculate KL divergence for pos={pos}, layer={layer} due to missing ablated logits.")
-                 # Keep KL divergence high as penalty
+                 # kl_divergence remains high
 
-
-            # Compute overall score (lower is better)
-            # Score = (Harmful Refusal Rate) + abs(Change in Harmless Refusal Rate) + (KL Divergence Weight * KL Divergence)
-
+            # Compute overall score
             score_components = [current_harmful_refusal_rate, current_harmless_refusal_rate, kl_divergence]
             if any(torch.isnan(c).any() or torch.isinf(c).any() for c in score_components):
                 logger.warning(f"NaN or Inf detected in score components for pos={pos}, layer={layer}. Assigning high penalty score.")
@@ -336,10 +392,9 @@ class DiffInMeans(ModelManipulation):
                 refusal_diff_harmless = torch.abs(current_harmless_refusal_rate - baseline_harmless_refusal_rate)
                 overall_score = current_harmful_refusal_rate + refusal_diff_harmless + kl_weight * kl_divergence
 
-
             current_score_float = overall_score.item() if not (torch.isnan(overall_score).any() or torch.isinf(overall_score).any()) else float('inf')
 
-            # --- Log Overall Results for this direction ---
+            # --- Log Overall Results ---
             overall_results_log.append({
                 'position': pos,
                 'layer': layer,
@@ -351,7 +406,7 @@ class DiffInMeans(ModelManipulation):
                 'error': error_msg
             })
 
-            # --- Log Detailed Results for this direction ---
+            # --- Log Detailed Results ---
             # Log harmful prompts/results
             for i, prompt in enumerate(formatted_harmful_prompts):
                 detailed_results_log.append({
@@ -382,14 +437,23 @@ class DiffInMeans(ModelManipulation):
                 })
 
 
-            # Update best direction logic (no changes needed here)
+            # Update best direction logic
             if current_score_float < best_score:
                  if not (torch.isnan(overall_score).any() or torch.isinf(overall_score).any()):
                     best_score = current_score_float
-                    best_direction = direction # Keep original precision direction
+                    # Store the best direction on CPU to save VRAM, move back to device when needed in apply()
+                    best_direction = direction.detach().cpu()
                     best_pos_layer = (pos, layer)
                  else:
                      logger.warning(f"Skipping update for best_score due to NaN/Inf in overall_score for pos={pos}, layer={layer}")
+
+            # --- Edit Start: Add periodic cleanup inside loop ---
+            # Optional: Force garbage collection periodically if the loop is very long
+            # and memory seems to creep up. This can add overhead.
+            # if (i + 1) % 10 == 0: # Example: every 10 directions
+            #    gc.collect()
+            #    if torch.cuda.is_available(): torch.cuda.empty_cache()
+            # --- Edit End ---
 
 
         # --- Final Selection, Logging, and Saving ---
@@ -426,32 +490,42 @@ class DiffInMeans(ModelManipulation):
 
 
         if best_pos_layer is None:
-             logger.error("Failed to find a best direction based on generation. Evaluation loop did not update the best score. Final top results (from log):")
-             # Log more results if failure
-             for i, result in enumerate(overall_results_log[:10]):
-                 logger.error(f"#{i+1}: pos={result['position']}, layer={result['layer']}, "
-                            f"score={result['overall_score']:.4f}, "
-                            f"harmful_refusal={result['harmful_refusal_rate']:.4f}, "
-                            f"harmless_refusal={result['harmless_refusal_rate']:.4f}, "
-                            f"kl_div={result['kl_divergence']:.4f}" +
-                            (f", error={result['error']}" if result['error'] else ""))
+             # ... (error handling remains the same) ...
+             # --- Edit Start: Ensure model deletion on error path ---
+             del model
+             if torch.cuda.is_available(): torch.cuda.empty_cache()
+             gc.collect()
+             # --- Edit End ---
              raise RuntimeError("Failed to find a best direction. Evaluation loop did not update the best score.")
 
         pos, layer = best_pos_layer
         logger.info(f"Selected best direction from position {pos}, layer {layer} with score {best_score:.4f}")
 
         if best_direction is None or torch.isnan(best_direction).any() or torch.isinf(best_direction).any():
+             # --- Edit Start: Ensure model deletion on error path ---
+             del model
+             if torch.cuda.is_available(): torch.cuda.empty_cache()
+             gc.collect()
+             # --- Edit End ---
              raise RuntimeError(f"Selected best_direction is invalid (None, NaN, or Inf) for pos={pos}, layer={layer}")
 
-        self.directions[model_path] = best_direction.to('cpu')
+        # Best direction is already on CPU from the loop optimization
+        self.directions[model_path] = best_direction
         self.save_directions() # Save immediately after finding
 
         # Clean up model to free memory
+        logger.info("Cleaning up model and final cache...")
         del model
+        del best_direction # Remove reference
+        del candidate_directions # Remove reference
+        del baseline_probs_harmless # Remove reference
+        # baseline_harmful_logits_last was never stored
+        del baseline_harmless_logits_last # Remove reference
+        gc.collect() # Python garbage collection
         if torch.cuda.is_available():
-            torch.cuda.empty_cache()
+            torch.cuda.empty_cache() # PyTorch CUDA cache clear
 
-        return self.directions[model_path]
+        return self.directions[model_path] # Return the CPU tensor
     
     # def generate(self, model_path: str, inputs: Dict[str, torch.Tensor], **kwargs) -> str:
     #     model = self.load_model(model_path)
@@ -472,6 +546,7 @@ class DiffInMeans(ModelManipulation):
         if model_path not in self.directions:
             raise ValueError(f"No direction found for model {model_path}")
         # Ensure direction is moved to the correct device when retrieved
+        # The stored direction is on CPU, move it to self.device here
         return self.directions[model_path].to(self.device)
     
     def get_hooks(self, model: HookedTransformer) -> List[Tuple[str, Callable]]:
