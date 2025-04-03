@@ -36,10 +36,30 @@ QWEN_CHAT_TEMPLATE = """<|im_start|>user
 """
 
 def format_prompts(prompts: List[str], tokenizer: AutoTokenizer) -> List[str]:
-    if tokenizer.name_or_path and "Qwen" in tokenizer.name_or_path:
+    # Check if the tokenizer has the apply_chat_template method
+    if hasattr(tokenizer, "apply_chat_template") and tokenizer.chat_template:
+        logger.debug(f"Using tokenizer.apply_chat_template for {tokenizer.name_or_path}")
+        # Format prompts using the standard method
+        # Each prompt is treated as a single user message in a conversation
+        formatted_prompts = [
+            tokenizer.apply_chat_template(
+                [{"role": "user", "content": prompt}],
+                tokenize=False,
+                add_generation_prompt=True # Ensures the template ends correctly for assistant generation
+            )
+            for prompt in prompts
+        ]
+        return formatted_prompts
+    # Fallback for Qwen or models without a standard chat template configured
+    elif tokenizer.name_or_path and "Qwen" in tokenizer.name_or_path:
+        logger.warning(f"Using hardcoded Qwen chat template for {tokenizer.name_or_path}.")
         return [QWEN_CHAT_TEMPLATE.format(instruction=prompt) for prompt in prompts]
     else:
-        raise Exception(f"Tokenizer {tokenizer.name_or_path} not supported. Add chat template to tokenizer.")
+        # If no method and not Qwen, raise an error
+        raise ValueError(
+            f"Tokenizer {tokenizer.name_or_path} does not have a chat_template configured "
+            f"and is not the hardcoded 'Qwen' type. Cannot format prompts."
+        )
 
 def tokenize_prompts(prompts: List[str], tokenizer: AutoTokenizer) -> List[str]:
     return tokenizer(prompts, padding=True,truncation=False, return_tensors="pt").input_ids
@@ -62,13 +82,14 @@ def generate_hooks(model: HookedTransformer, direction: Float[Tensor, "d_act"]):
     return fwd_hooks
 
 class DiffInMeans(ModelManipulation):
-    def __init__(self, path: str = None, use_cache: bool = True):
+    def __init__(self, path: str = None, use_cache: bool = True, hf_token: str = None):
         super().__init__()
         self.name = "diff-in-means"
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self.path = path or "jailbreaks/checkpoints/diff-in-means.pt"
         self.directions = self.load_directions(self.path) if use_cache else {}
-
+        self.hf_token = hf_token
+        
     def apply(self, model: AutoModelForCausalLM) -> str:
         original_generate = model.generate
         if not isinstance(model, HookedTransformer):
@@ -120,7 +141,8 @@ class DiffInMeans(ModelManipulation):
             dtype=torch.float16,
             default_padding_side='left',
             #fp16=True,
-            trust_remote_code=True
+            trust_remote_code=True,
+            use_auth_token=self.hf_token
         )
         return model
     
