@@ -189,7 +189,7 @@ class DiffInMeans(ModelManipulation):
 
         logger.info(f"Loading model {model_path}")
         model = self.load_model(model_path)
-        tokenizer = model.tokenizer # Use the tokenizer from the HookedTransformer
+        tokenizer = AutoTokenizer.from_pretrained(model_path, device_map="auto", use_auth_token=self.hf_token)
 
         # Ensure tokenizer has a padding token and correct padding side (as before)
         if tokenizer.pad_token is None:
