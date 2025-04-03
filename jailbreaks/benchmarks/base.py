@@ -1,4 +1,5 @@
-from jailbreaks.models.llm import LLM
+from jailbreaks.llm import LLM
+
 
 class Benchmark:
     def __init__(self, name=None):
