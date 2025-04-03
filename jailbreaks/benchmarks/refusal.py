@@ -1,7 +1,8 @@
 from typing import List
 
 from jailbreaks.benchmarks.base import Benchmark
-from jailbreaks.models.llm import LLM
+from jailbreaks.llm import LLM
+
 from jailbreaks.utils import is_refusal
 
 import mlflow

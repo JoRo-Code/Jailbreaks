@@ -11,7 +11,8 @@ import torch
 
 # Models
 from transformers import AutoModelForCausalLM, AutoTokenizer
-from jailbreaks.models.llm import LLM
+from jailbreaks.llm import LLM
+
 
 # Benchmarks
 from jailbreaks.benchmarks.refusal import RefusalBenchmark

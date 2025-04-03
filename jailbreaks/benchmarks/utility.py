@@ -1,7 +1,8 @@
 from pydantic import BaseModel
 
 from jailbreaks.benchmarks.base import Benchmark
-from jailbreaks.models.llm import LLM
+from jailbreaks.llm import LLM
+
 
 import os
 import time
