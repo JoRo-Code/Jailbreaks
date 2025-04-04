@@ -50,9 +50,9 @@ harmless_prompts = get_harmless_instructions()
 
 N = 32
 
-prompts = harmful_prompts[N:N+N]
+prompts = harmful_prompts[N:N*2]
 
-result = d.fit_and_generate(model_path, harmful_prompts[:N], harmless_prompts[:N], prompts[:N], layer=14)
+result = d.fit_and_generate(model_path, harmful_prompts[:N], harmless_prompts[:N], prompts[:N], layer=15)
 
 for r in result:
     prompt = r['prompt']
