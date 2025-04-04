@@ -35,23 +35,29 @@ QWEN_CHAT_TEMPLATE = """<|im_start|>user
 <|im_start|>assistant
 """
 
+LLAMA3_CHAT_TEMPLATE = """<|start_header_id|>user<|end_header_id|>
+
+{instruction}<|eot_id|><|start_header_id|>assistant<|end_header_id|>
+
+"""
+
 def format_prompts(prompts: List[str], tokenizer: AutoTokenizer) -> List[str]:
     # Check if the tokenizer has the apply_chat_template method
-    if hasattr(tokenizer, "apply_chat_template") and tokenizer.chat_template:
-        logger.debug(f"Using tokenizer.apply_chat_template for {tokenizer.name_or_path}")
-        # Format prompts using the standard method
-        # Each prompt is treated as a single user message in a conversation
-        formatted_prompts = [
-            tokenizer.apply_chat_template(
-                [{"role": "user", "content": prompt}],
-                tokenize=False,
-                add_generation_prompt=True # Ensures the template ends correctly for assistant generation
-            )
-            for prompt in prompts
-        ]
-        return formatted_prompts
+    # if hasattr(tokenizer, "apply_chat_template") and tokenizer.chat_template:
+    #     logger.debug(f"Using tokenizer.apply_chat_template for {tokenizer.name_or_path}")
+    #     # Format prompts using the standard method
+    #     # Each prompt is treated as a single user message in a conversation
+    #     formatted_prompts = [
+    #         tokenizer.apply_chat_template(
+    #             [{"role": "user", "content": prompt}],
+    #             tokenize=False,
+    #             add_generation_prompt=True 
+    #         )
+    #         for prompt in prompts
+    #     ]
+    #     return formatted_prompts
     # Fallback for Qwen or models without a standard chat template configured
-    elif tokenizer.name_or_path and "Qwen" in tokenizer.name_or_path:
+    if tokenizer.name_or_path and "Qwen" in tokenizer.name_or_path:
         logger.warning(f"Using hardcoded Qwen chat template for {tokenizer.name_or_path}.")
         return [QWEN_CHAT_TEMPLATE.format(instruction=prompt) for prompt in prompts]
     else:
@@ -62,6 +68,13 @@ def format_prompts(prompts: List[str], tokenizer: AutoTokenizer) -> List[str]:
         )
 
 def tokenize_prompts(prompts: List[str], tokenizer: AutoTokenizer) -> List[str]:
+    if tokenizer.pad_token is None:
+        logger.warning("Tokenizer does not have a pad token. Setting to eos_token.")
+        tokenizer.pad_token = tokenizer.eos_token
+        # No need to update model.tokenizer separately if using model.tokenizer directly
+    if tokenizer.padding_side != 'left':
+            logger.warning(f"Tokenizer padding side is '{tokenizer.padding_side}'. Forcing to 'left'.")
+            tokenizer.padding_side = 'left'
     return tokenizer(prompts, padding=True,truncation=False, return_tensors="pt").input_ids
 
 def hooked_transformer_path(model: HookedTransformer) -> str:
@@ -99,7 +112,7 @@ class DiffInMeans(ModelManipulation):
 
         model_path = hooked_transformer_path(model)
         direction = self.get_direction(model_path)
-        hooks = generate_hooks(model, direction)
+        hooks = generate_hooks(model, direction.to(self.device))
         
         def new_generate(*args, **kwargs):
             with model.hooks(hooks):
@@ -548,6 +561,92 @@ class DiffInMeans(ModelManipulation):
             torch.cuda.empty_cache() # PyTorch CUDA cache clear
 
         return self.directions[model_path] # Return the CPU tensor
+    
+    def fit_and_generate(self, model_path: str, harmful_prompts: List[str], harmless_prompts: List[str], prompts: List[str], layer: int = 14, pos: int = -1, **kwargs) -> str:
+        
+        model = self.load_model(model_path)
+        tokenizer = AutoTokenizer.from_pretrained(model_path, device_map="auto", use_auth_token=self.hf_token)
+
+        formatted_harmful_prompts = format_prompts(harmful_prompts, tokenizer)
+        formatted_harmless_prompts = format_prompts(harmless_prompts, tokenizer)
+
+        # Tokenize prompts
+        harmful_toks = tokenize_prompts(formatted_harmful_prompts, tokenizer).to(self.device)
+        harmless_toks = tokenize_prompts(formatted_harmless_prompts, tokenizer).to(self.device)
+        default_generation_kwargs = {
+            "max_new_tokens": 50,
+            "eos_token_id": tokenizer.eos_token_id,
+            #"pad_token_id": tokenizer.pad_token_id,
+            "do_sample": False, # Use greedy decoding for reproducibility
+        }
+
+        resid_pre_hook_name_filter = lambda name: name.endswith('resid_pre')
+
+        baseline_harmful_logits_full, harmful_cache = model.run_with_cache(
+            harmful_toks,
+            names_filter=resid_pre_hook_name_filter
+        )
+        # We don't need harmful logits, delete the full tensor
+        del baseline_harmful_logits_full
+        if torch.cuda.is_available(): torch.cuda.empty_cache()
+        gc.collect()
+
+        # Run harmless prompts
+        baseline_harmful_logits_full, harmless_cache = model.run_with_cache(
+            harmless_toks,
+            names_filter=resid_pre_hook_name_filter
+        )
+        del baseline_harmful_logits_full
+        if torch.cuda.is_available(): torch.cuda.empty_cache()
+        gc.collect()
+
+        harmful_act = harmful_cache['resid_pre', layer][:, pos, :].mean(dim=0).to(self.device)
+        harmless_act = harmless_cache['resid_pre', layer][:, pos, :].mean(dim=0).to(self.device)
+        direction = harmful_act - harmless_act
+        direction_norm = direction.norm()
+        if direction_norm > 1e-8:
+            direction = direction / direction_norm
+
+        hooks = generate_hooks(model, direction.to(self.device))
+        del harmful_cache
+        del harmless_cache
+        del harmful_toks
+        del harmless_toks
+        if torch.cuda.is_available(): torch.cuda.empty_cache()
+        gc.collect()
+        
+        formatted_prompts = format_prompts(prompts, tokenizer)
+        toks = tokenize_prompts(formatted_prompts, tokenizer).to(self.device)
+        
+        baseline_outputs_ids = model.generate(toks, **default_generation_kwargs)
+        with model.hooks(hooks):
+            ablated_outputs_ids = model.generate(toks, **default_generation_kwargs)
+        
+        
+        ablated_responses = [tokenizer.decode(o[toks.shape[1]:], skip_special_tokens=True) for o in ablated_outputs_ids]
+        baseline_responses = [tokenizer.decode(o[toks.shape[1]:], skip_special_tokens=True) for o in baseline_outputs_ids]
+        prompt_response_pairs = [
+            {"prompt": original_prompt, "ablated_response": ablated_response, "baseline_response": baseline_response}
+            for original_prompt, ablated_response, baseline_response in zip(prompts, ablated_responses, baseline_responses)
+        ]
+        
+        del model
+        del direction
+        del toks
+        del ablated_outputs_ids
+        del ablated_responses # Delete the intermediate list too
+        if torch.cuda.is_available(): torch.cuda.empty_cache()
+        gc.collect()
+        
+        return prompt_response_pairs
+        
+        
+    def generate(self, model_path: str, inputs: Dict[str, torch.Tensor], **kwargs) -> str:
+        model = self.load_model(model_path)
+        hooks = self.get_hooks(model)
+        with model.hooks(hooks):
+            output = model.generate(inputs, **kwargs)
+        return model.tokenizer.decode(output[0])
     
     # def generate(self, model_path: str, inputs: Dict[str, torch.Tensor], **kwargs) -> str:
     #     model = self.load_model(model_path)
