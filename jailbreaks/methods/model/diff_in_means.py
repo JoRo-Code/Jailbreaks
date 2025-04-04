@@ -159,6 +159,9 @@ class DiffInMeans(ModelManipulation):
         )
         return model
     
+    def load_tokenizer(self, model_path: str) -> AutoTokenizer:
+        return AutoTokenizer.from_pretrained(model_path, device_map="auto", use_auth_token=self.hf_token)
+    
     def get_last_position_logits(self, model, harmful_toks, harmless_toks, hooks=None) -> torch.Tensor:
         """Get logits at last position for harmful and harmless inputs."""
         with model.hooks(hooks) if hooks else contextlib.nullcontext():
@@ -562,6 +565,11 @@ class DiffInMeans(ModelManipulation):
 
         return self.directions[model_path] # Return the CPU tensor
     
+    def generate_with_hooks(self, model: HookedTransformer, toks: torch.Tensor, hooks: List[Tuple[str, Callable]], **kwargs) -> str:
+        with model.hooks(hooks):
+            output_toks = model.generate(toks, **kwargs)
+        return output_toks
+    
     def fit_and_generate(self, model_path: str, harmful_prompts: List[str], harmless_prompts: List[str], prompts: List[str], layer: int = 14, pos: int = -1, **kwargs) -> str:
         
         model = self.load_model(model_path)
@@ -619,9 +627,8 @@ class DiffInMeans(ModelManipulation):
         toks = tokenize_prompts(formatted_prompts, tokenizer).to(self.device)
         
         baseline_outputs_ids = model.generate(toks, **default_generation_kwargs)
-        with model.hooks(hooks):
-            ablated_outputs_ids = model.generate(toks, **default_generation_kwargs)
         
+        ablated_outputs_ids = self.generate_with_hooks(model, toks, hooks, **default_generation_kwargs)
         
         ablated_responses = [tokenizer.decode(o[toks.shape[1]:], skip_special_tokens=True) for o in ablated_outputs_ids]
         baseline_responses = [tokenizer.decode(o[toks.shape[1]:], skip_special_tokens=True) for o in baseline_outputs_ids]
@@ -644,9 +651,8 @@ class DiffInMeans(ModelManipulation):
     def generate(self, model_path: str, inputs: Dict[str, torch.Tensor], **kwargs) -> str:
         model = self.load_model(model_path)
         hooks = self.get_hooks(model)
-        with model.hooks(hooks):
-            output = model.generate(inputs, **kwargs)
-        return model.tokenizer.decode(output[0])
+        toks = self.generate_with_hooks(model, inputs, hooks, **kwargs)
+        return [tokenizer.decode(o[toks.shape[1]:], skip_special_tokens=True) for o in toks]
     
     # def generate(self, model_path: str, inputs: Dict[str, torch.Tensor], **kwargs) -> str:
     #     model = self.load_model(model_path)
