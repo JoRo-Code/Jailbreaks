@@ -1,7 +1,7 @@
 from jailbreaks.methods.base_method import PromptInjection
 import nanogcg
 from nanogcg import GCGConfig
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from jailbreaks.utils.model_loading import load_model, load_tokenizer
 import torch
 import os
 
@@ -95,12 +95,8 @@ class GCG(PromptInjection):
     def fit_model(self, model_name: str):
         logger.info(f"Fitting GCG for {model_name}")
         
-        DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-        model = AutoModelForCausalLM.from_pretrained(
-            model_name, 
-            torch_dtype=torch.float16, 
-        ).to(DEVICE)
-        tokenizer = AutoTokenizer.from_pretrained(model_name)
+        model = load_model(model_name)
+        tokenizer = load_tokenizer(model_name)
         original_forward = model.forward
         
         def patched_forward(*args, **kwargs):
