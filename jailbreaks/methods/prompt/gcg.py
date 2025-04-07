@@ -2,11 +2,10 @@ from jailbreaks.methods.base_method import PromptInjection
 import nanogcg
 from nanogcg import GCGConfig
 from jailbreaks.utils.model_loading import load_model, load_tokenizer
-import torch
 import os
 
 import logging
-# Configure logging
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
@@ -55,6 +54,17 @@ class PastKeyValuesWrapper:
 
     def __len__(self):
         return len(self.pkv)
+    
+from dataclasses import dataclass
+@dataclass
+class CustomGCGResult:
+    suffix: str
+    loss: float
+    message: str
+    target: str
+    # loss_history: list[float]
+    # strings: list[str]
+    config: GCGConfig
 
 import json
 class GCG(PromptInjection):
@@ -62,7 +72,7 @@ class GCG(PromptInjection):
         super().__init__()
         self.message = message
         self.target = target
-        self.suffixes = {}
+        self.results = {}
         self.config = config or GCGConfig(
             num_steps=500,
             search_width=64,
@@ -70,13 +80,26 @@ class GCG(PromptInjection):
             seed=42,
             verbosity="WARNING"
         )
-        self.path = path
+        self.path = path or "checkpoints/gcg.json"
         if self.path:
             self.load(self.path)
         
-    def save(self, path: str = None):        
+    def save(self, path: str = None):
+        logger.info(f"Saving GCG results to {path or self.path}")
+        serializable_results = {
+            model_name: {
+                "suffix": result.suffix,
+                "loss": result.loss,
+                "message": result.message,
+                "target": result.target,
+                "config": result.config.__dict__,
+                # "loss_history": result.loss_history,
+                # "strings": result.strings
+            }
+            for model_name, result in self.results.items()
+        }
         with open(path or self.path, "w") as f:
-            json.dump(self.suffixes, f)
+            json.dump(serializable_results, f)
     
     def load(self, path: str = None):
         logger.info(f"Loading GCG from {path or self.path}")
@@ -85,15 +108,36 @@ class GCG(PromptInjection):
             logger.warning(f"Path {path or self.path} does not exist")
             return
         with open(path or self.path, "r") as f:
-            self.suffixes = json.load(f)
+            serialized_results = json.load(f)
+            # Convert dictionaries back to GCGResult objects
+            self.results = {
+                model_name: CustomGCGResult(
+                    message=data["message"],
+                    target=data["target"],
+                    config=GCGConfig(**data["config"]),
+                    suffix=data["suffix"],
+                    loss=data["loss"],
+                    # loss_history=data["loss_history"],
+                    # strings=data["strings"]
+                )
+                for model_name, data in serialized_results.items()
+            }
+    
+    def clear(self):
+        self.results = {}
+        if self.path and os.path.exists(self.path):
+            os.remove(self.path)
+            logger.info(f"Deleted GCG results file: {self.path}")
     
     def fit(self, model_names: list[str], refit: bool = True):
         for model_name in model_names:
-            if refit or model_name not in self.suffixes:
+            if refit or model_name not in self.results:
                 self.fit_model(model_name)
     
     def fit_model(self, model_name: str):
         logger.info(f"Fitting GCG for {model_name}")
+        
+        self.load()
         
         model = load_model(model_name)
         tokenizer = load_tokenizer(model_name)
@@ -107,14 +151,24 @@ class GCG(PromptInjection):
         
         model.forward = patched_forward
         result = nanogcg.run(model, tokenizer, self.message, self.target, self.config)
-                
-        self.suffixes[model_name] = result.best_string
+        result = CustomGCGResult(
+            message=self.message,
+            target=self.target,
+            config=self.config,
+            suffix=result.best_string,
+            loss=result.best_loss,
+            # loss_history=result.losses,
+            # strings=result.strings
+        )
+        self.results[model_name] = result
+        self.save()
+        
         return result
 
     def preprocess(self, prompt: str, model_name: str, refit: bool = False) -> str:
-        if model_name not in self.suffixes or refit:
+        if model_name not in self.results or refit:
             self.fit([model_name], refit)
             
-        return f"{prompt} {self.suffixes[model_name]}"
+        return f"{prompt} {self.results[model_name].suffix}"
 
 

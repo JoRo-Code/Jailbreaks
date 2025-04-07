@@ -27,7 +27,6 @@ def load_model(model_path, device=None, **kwargs):
     model = AutoModelForCausalLM.from_pretrained(
         model_path, 
         torch_dtype=torch.float16,
-        default_padding_side='left',
         trust_remote_code=True,
         token=get_auth_token(),
         **kwargs
@@ -38,6 +37,6 @@ def load_tokenizer(model_path, **kwargs):
     return AutoTokenizer.from_pretrained(
         model_path, 
         device_map="auto", 
-        use_auth_token=get_auth_token(),
+        token=get_auth_token(),
         **kwargs
     )
