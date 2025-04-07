@@ -3,6 +3,7 @@ import nanogcg
 from nanogcg import GCGConfig
 from jailbreaks.utils.model_loading import load_model, load_tokenizer
 import os
+import time
 
 import logging
 
@@ -65,7 +66,7 @@ class CustomGCGResult:
     # loss_history: list[float]
     # strings: list[str]
     config: GCGConfig
-
+    time: float
 import json
 class GCG(PromptInjection):
     def __init__(self, message: str, target: str, config: GCGConfig = None, path: str = None):
@@ -93,6 +94,7 @@ class GCG(PromptInjection):
                 "message": result.message,
                 "target": result.target,
                 "config": result.config.__dict__,
+                "time": result.time,
                 # "loss_history": result.loss_history,
                 # "strings": result.strings
             }
@@ -117,6 +119,7 @@ class GCG(PromptInjection):
                     config=GCGConfig(**data["config"]),
                     suffix=data["suffix"],
                     loss=data["loss"],
+                    time=data["time"],
                     # loss_history=data["loss_history"],
                     # strings=data["strings"]
                 )
@@ -138,7 +141,7 @@ class GCG(PromptInjection):
         logger.info(f"Fitting GCG for {model_name}")
         
         self.load()
-        
+
         model = load_model(model_name)
         tokenizer = load_tokenizer(model_name)
         original_forward = model.forward
@@ -150,16 +153,21 @@ class GCG(PromptInjection):
             return original_forward(*args, **kwargs)
         
         model.forward = patched_forward
+        start_time = time.time()
         result = nanogcg.run(model, tokenizer, self.message, self.target, self.config)
+        end_time = time.time()
+        
         result = CustomGCGResult(
             message=self.message,
             target=self.target,
             config=self.config,
             suffix=result.best_string,
             loss=result.best_loss,
+            time=end_time - start_time,
             # loss_history=result.losses,
             # strings=result.strings
         )
+        logger.info(f"Time taken to fit {model_name}: {end_time - start_time} seconds")
         self.results[model_name] = result
         self.save()
         

@@ -37,13 +37,13 @@ cd jailbreak
 ```sh
 mlflow server --backend-store-uri sqlite:///mlflow.db --default-artifact-root ./mlruns
 ```
-<!-- 5. Secrets
+5. Secrets
 populate `.env` with your `HUGGINGFACE_HUB_TOKEN`
 ```sh
 export $(cat .env | xargs)
 ```
 6. Head to Hugging Face and get access to downloading models
-e.g. [meta-llama/Llama-2-7b](https://huggingface.co/meta-llama/Llama-2-7b) -->
+e.g. [mistralai/Mistral-7B-Instruct-v0.1](https://huggingface.co/mistralai/Mistral-7B-Instruct-v0.1) or [meta-llama/Llama-3.1-8B-Instruct](https://huggingface.co/meta-llama/Llama-3.1-8B-Instruct)
 
 ## Usage
 ```sh
@@ -72,15 +72,17 @@ Navigate to http://localhost:5001 to explore experiment results.
     - [x] output aware generation exploit
     - [x] GCG fitting
         - Alternative: fit on model with hooks (ablated model)
-    - [ ] diff-in-means single direction
+    - [x] diff-in-means single direction
 - Refusal Benchmark 
     - [x] simple "include"-classifier
     - [ ] Refusal scorer (LLM/classifier):
         - [ ] Refusal score
         - [ ] Response Quality
     - [x] logging to unique runs (model & method combinations)
-- model support
-    - [x] Qwen2
+- Models
+    - [x] mistralai/Mistral-7B-Instruct-v0.1
+    - [x] Qwen/Qwen2.5-7B-Instruct
+    - [x] meta-llama/Llama-3.1-8B-Instruct
 
 - [ ] easy extraction of results
 - [ ] fitting time
