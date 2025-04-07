@@ -114,33 +114,18 @@ class DiffInMeans(ModelManipulation):
         self.directions = self.load_directions(self.path) if use_cache else {}
         self.hf_token = hf_token
     
-    def apply(self, model: AutoModelForCausalLM) -> str:
-        model = self.load_model(model.name_or_path)
-        tokenizer = self.load_tokenizer(model.name_or_path)
-
-        formatted_prompts = format_prompts(prompts, tokenizer)
-        ids = tokenize_prompts(formatted_prompts, tokenizer).to(self.device)
+    def apply(self, model_path: str) -> str:
+        model = self.load_model(model_path)
+        hooks = self.get_hooks(model)
         
-        
-        
-    def old_apply(self, model: AutoModelForCausalLM) -> str:
         original_generate = model.generate
-        if not isinstance(model, HookedTransformer):
-            model = self._convert_to_hooked_transformer(model)
-        else:
-            logger.warning("Model is already a HookedTransformer")
-
-        model_path = hooked_transformer_path(model)
-        direction = self.get_direction(model_path)
-        hooks = generate_hooks(model, direction.to(self.device))
-        
         def new_generate(*args, **kwargs):
             with model.hooks(hooks):
                 logger.debug(f"Generating with '{len(hooks)}' hooks")
                 return original_generate(*args, **kwargs)
-                
+
         model.generate = new_generate
-                
+        
         return model
     
     def save(self, path: str = None):
@@ -647,28 +632,6 @@ class DiffInMeans(ModelManipulation):
         
         return prompt_response_pairs
         
-        
-    def generate(self, model_path: str, inputs: Dict[str, torch.Tensor], **kwargs) -> str:
-        model = self.load_model(model_path)
-        hooks = self.get_hooks(model)
-        toks = self.generate_with_hooks(model, inputs, hooks, **kwargs)
-        return [tokenizer.decode(o[toks.shape[1]:], skip_special_tokens=True) for o in toks]
-    
-    # def generate(self, model_path: str, inputs: Dict[str, torch.Tensor], **kwargs) -> str:
-    #     model = self.load_model(model_path)
-    #     hooks = self.model2hooks[model_path]
-    #     with model.hooks(hooks):
-    #         output = model.generate(inputs, **kwargs)
-    #     return model.tokenizer.decode(output[0])
-    
-    # def generate_completion(self, model_path: str, prompt: str, **kwargs) -> str:
-    #     model = self.load_model(model_path)
-    #     hooks = self.model2hooks[model_path]
-    #     toks = tokenize_prompts([prompt], model.tokenizer).input_ids.to(self.device)
-    #     with model.hooks(hooks):
-    #         output = model.generate(toks, **kwargs)
-    #     return model.tokenizer.decode(output[0])
-    
     def get_direction(self, model_path: str) -> Float[Tensor, "d_act"]:
         if model_path not in self.directions:
             raise ValueError(f"No direction found for model {model_path}")
