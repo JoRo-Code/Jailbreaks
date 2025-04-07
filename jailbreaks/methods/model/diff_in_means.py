@@ -12,16 +12,14 @@ from transformer_lens.hook_points import HookPoint
 from transformer_lens.utils import einops
 
 import logging
-import pickle
 import os
-import contextlib
 from tqdm import tqdm
 import pandas as pd
 import time
-import gc # Import garbage collector
+import gc
 
-from jailbreaks.utils import is_refusal
-
+from jailbreaks.utils.refusal import is_refusal
+from jailbreaks.utils.tokenization import format_prompts, tokenize_prompts
 logger = logging.getLogger("DiffInMeans")
 
 logging.basicConfig(
@@ -29,64 +27,6 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     force=True
 )
-
-QWEN_CHAT_TEMPLATE = """<|im_start|>user
-{instruction}<|im_end|>
-<|im_start|>assistant
-"""
-
-LLAMA3_CHAT_TEMPLATE = """<|start_header_id|>user<|end_header_id|>
-
-{instruction}<|eot_id|><|start_header_id|>assistant<|end_header_id|>
-
-"""
-
-MISTRAL_CHAT_TEMPLATE = """[INST]{instruction}[/INST]"""
-
-def format_prompts(prompts: List[str], tokenizer: AutoTokenizer) -> List[str]:
-    # Check if the tokenizer has the apply_chat_template method
-    # if hasattr(tokenizer, "apply_chat_template") and tokenizer.chat_template:
-    #     logger.debug(f"Using tokenizer.apply_chat_template for {tokenizer.name_or_path}")
-    #     # Format prompts using the standard method
-    #     # Each prompt is treated as a single user message in a conversation
-    #     formatted_prompts = [
-    #         tokenizer.apply_chat_template(
-    #             [{"role": "user", "content": prompt}],
-    #             tokenize=False,
-    #             add_generation_prompt=True 
-    #         )
-    #         for prompt in prompts
-    #     ]
-    #     return formatted_prompts
-    
-    # Check for different model types
-    model_path = tokenizer.name_or_path.lower()
-    
-    if "qwen" in model_path:
-        logger.warning(f"Using hardcoded Qwen chat template for {tokenizer.name_or_path}")
-        return [QWEN_CHAT_TEMPLATE.format(instruction=prompt) for prompt in prompts]
-    elif "llama" in model_path:
-        logger.warning(f"Using hardcoded Llama chat template for {tokenizer.name_or_path}")
-        return [LLAMA3_CHAT_TEMPLATE.format(instruction=prompt) for prompt in prompts]
-    elif "mistral" in model_path:
-        logger.warning(f"Using hardcoded Mistral chat template for {tokenizer.name_or_path}")
-        return [MISTRAL_CHAT_TEMPLATE.format(instruction=prompt) for prompt in prompts]
-    else:
-        # If no method and not a recognized model, raise an error
-        raise ValueError(
-            f"Tokenizer {tokenizer.name_or_path} does not have a chat_template configured "
-            f"and is not a recognized model type (Qwen/Llama). Cannot format prompts."
-        )
-
-def tokenize_prompts(prompts: List[str], tokenizer: AutoTokenizer) -> List[str]:
-    if tokenizer.pad_token is None:
-        logger.warning("Tokenizer does not have a pad token. Setting to eos_token.")
-        tokenizer.pad_token = tokenizer.eos_token
-
-    if tokenizer.padding_side != 'left':
-            logger.warning(f"Tokenizer padding side is '{tokenizer.padding_side}'. Forcing to 'left'.")
-            tokenizer.padding_side = 'left'
-    return tokenizer(prompts, padding=True,truncation=False, return_tensors="pt")
 
 def hooked_transformer_path(model: HookedTransformer) -> str:
     return model.cfg.tokenizer_name

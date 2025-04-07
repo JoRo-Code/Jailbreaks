@@ -3,7 +3,7 @@ from typing import List
 from jailbreaks.benchmarks.base import Benchmark
 from jailbreaks.llm import LLM
 
-from jailbreaks.utils import is_refusal
+from jailbreaks.utils.refusal import is_refusal
 
 import mlflow
 import time
