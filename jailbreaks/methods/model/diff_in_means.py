@@ -47,12 +47,37 @@ def generate_hooks(model: HookedTransformer, direction: Float[Tensor, "d_act"]):
     fwd_hooks = [(utils.get_act_name(act_name, l), hook_fn) for l in intervention_layers for act_name in ['resid_pre', 'resid_mid', 'resid_post']]
     return fwd_hooks
 
+def kl_div(probs_a, probs_b, epsilon=1e-6):
+    """Calculate KL divergence between two probability distributions."""
+    # Ensure inputs are probabilities (sum to 1) and non-negative
+    probs_a = torch.clamp(probs_a, min=0)
+    probs_b = torch.clamp(probs_b, min=0)
+    # Add epsilon and re-normalize slightly to avoid log(0) issues more robustly
+    probs_a = (probs_a + epsilon) / (1.0 + probs_a.shape[-1] * epsilon)
+    probs_b = (probs_b + epsilon) / (1.0 + probs_b.shape[-1] * epsilon)
+    
+    # Use log_softmax for potentially better stability
+    log_probs_a = torch.log(probs_a) # log(p)
+    log_probs_b = torch.log(probs_b) # log(q)
+
+    # KL(P || Q) = sum(P * (log P - log Q))
+    kl_term = probs_a * (log_probs_a - log_probs_b)
+    
+    # Check for NaNs/Infs in the KL term itself before summing
+    if torch.isnan(kl_term).any() or torch.isinf(kl_term).any():
+        logger.warning("NaN or Inf detected in KL divergence term calculation. Clamping.")
+        # Replace NaNs/Infs with 0, assuming they result from 0 * log(0) or similar issues
+        # A large penalty might be better if this happens often.
+        kl_term = torch.nan_to_num(kl_term, nan=0.0, posinf=0.0, neginf=0.0) 
+        
+    return torch.sum(kl_term, dim=-1).mean()
+
 class DiffInMeans(ModelManipulation):
     def __init__(self, path: str = None, use_cache: bool = True):
         super().__init__()
         self.name = "diff-in-means"
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        self.path = path or "jailbreaks/checkpoints/diff-in-means.pt"
+        self.path = path or "checkpoints/diff-in-means.pt"
         self.directions = self.load_directions(self.path) if use_cache else {}
     
     def apply(self, model_path: str) -> str:
@@ -89,33 +114,15 @@ class DiffInMeans(ModelManipulation):
                 directions[key] = directions[key].to(self.device)
         return directions
     
-    def _convert_to_hooked_transformer(self, model: AutoModelForCausalLM) -> HookedTransformer:
-        return load_hooked_transformer(model.name_or_path)
+    def get_direction(self, model_path: str) -> Float[Tensor, "d_act"]:
+        if model_path not in self.directions:
+            raise ValueError(f"No direction found for model {model_path}")
+        return self.directions[model_path].to(self.device)
     
-    def kl_div(self, probs_a, probs_b, epsilon=1e-6):
-        """Calculate KL divergence between two probability distributions."""
-        # Ensure inputs are probabilities (sum to 1) and non-negative
-        probs_a = torch.clamp(probs_a, min=0)
-        probs_b = torch.clamp(probs_b, min=0)
-        # Add epsilon and re-normalize slightly to avoid log(0) issues more robustly
-        probs_a = (probs_a + epsilon) / (1.0 + probs_a.shape[-1] * epsilon)
-        probs_b = (probs_b + epsilon) / (1.0 + probs_b.shape[-1] * epsilon)
-        
-        # Use log_softmax for potentially better stability
-        log_probs_a = torch.log(probs_a) # log(p)
-        log_probs_b = torch.log(probs_b) # log(q)
-
-        # KL(P || Q) = sum(P * (log P - log Q))
-        kl_term = probs_a * (log_probs_a - log_probs_b)
-        
-        # Check for NaNs/Infs in the KL term itself before summing
-        if torch.isnan(kl_term).any() or torch.isinf(kl_term).any():
-            logger.warning("NaN or Inf detected in KL divergence term calculation. Clamping.")
-            # Replace NaNs/Infs with 0, assuming they result from 0 * log(0) or similar issues
-            # A large penalty might be better if this happens often.
-            kl_term = torch.nan_to_num(kl_term, nan=0.0, posinf=0.0, neginf=0.0) 
-            
-        return torch.sum(kl_term, dim=-1).mean()
+    def get_hooks(self, model: HookedTransformer) -> List[Tuple[str, Callable]]:
+        model_path = hooked_transformer_path(model)
+        direction = self.get_direction(model_path)
+        return generate_hooks(model, direction)
 
     def fit(self, model_path: str, harmful_prompts: List[str], harmless_prompts: List[str], refit=False, generation_kwargs: Dict = None) -> str:
         if model_path in self.directions and not refit:
@@ -318,7 +325,7 @@ class DiffInMeans(ModelManipulation):
                 try:
                     ablated_probs_harmless = torch.nn.functional.softmax(ablated_harmless_logits_last, dim=-1)
                     # Ensure baseline_probs_harmless is on the same device
-                    kl_divergence = self.kl_div(baseline_probs_harmless.to(ablated_probs_harmless.device), ablated_probs_harmless)
+                    kl_divergence = kl_div(baseline_probs_harmless.to(ablated_probs_harmless.device), ablated_probs_harmless)
                 except Exception as kl_e:
                     logger.error(f"Error calculating KL divergence for pos={pos}, layer={layer}: {kl_e}")
                     kl_divergence = torch.tensor(torch.finfo(torch.float32).max, device=self.device) # Assign max KL on error
@@ -475,15 +482,3 @@ class DiffInMeans(ModelManipulation):
 
         return self.directions[model_path] # Return the CPU tensor
         
-    def get_direction(self, model_path: str) -> Float[Tensor, "d_act"]:
-        if model_path not in self.directions:
-            raise ValueError(f"No direction found for model {model_path}")
-        # Ensure direction is moved to the correct device when retrieved
-        # The stored direction is on CPU, move it to self.device here
-        return self.directions[model_path].to(self.device)
-    
-    def get_hooks(self, model: HookedTransformer) -> List[Tuple[str, Callable]]:
-        model_path = hooked_transformer_path(model)
-        if model_path not in self.directions:
-            raise ValueError(f"No direction found for model {model_path}")
-        return generate_hooks(model, self.directions[model_path])
