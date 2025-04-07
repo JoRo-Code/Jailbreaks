@@ -41,6 +41,8 @@ LLAMA3_CHAT_TEMPLATE = """<|start_header_id|>user<|end_header_id|>
 
 """
 
+MISTRAL_CHAT_TEMPLATE = """[INST]{instruction}[/INST]"""
+
 def format_prompts(prompts: List[str], tokenizer: AutoTokenizer) -> List[str]:
     # Check if the tokenizer has the apply_chat_template method
     # if hasattr(tokenizer, "apply_chat_template") and tokenizer.chat_template:
@@ -56,26 +58,35 @@ def format_prompts(prompts: List[str], tokenizer: AutoTokenizer) -> List[str]:
     #         for prompt in prompts
     #     ]
     #     return formatted_prompts
-    # Fallback for Qwen or models without a standard chat template configured
-    if tokenizer.name_or_path and "Qwen" in tokenizer.name_or_path:
-        logger.warning(f"Using hardcoded Qwen chat template for {tokenizer.name_or_path}.")
+    
+    # Check for different model types
+    model_path = tokenizer.name_or_path.lower()
+    
+    if "qwen" in model_path:
+        logger.warning(f"Using hardcoded Qwen chat template for {tokenizer.name_or_path}")
         return [QWEN_CHAT_TEMPLATE.format(instruction=prompt) for prompt in prompts]
+    elif "llama" in model_path:
+        logger.warning(f"Using hardcoded Llama chat template for {tokenizer.name_or_path}")
+        return [LLAMA3_CHAT_TEMPLATE.format(instruction=prompt) for prompt in prompts]
+    elif "mistral" in model_path:
+        logger.warning(f"Using hardcoded Mistral chat template for {tokenizer.name_or_path}")
+        return [MISTRAL_CHAT_TEMPLATE.format(instruction=prompt) for prompt in prompts]
     else:
-        # If no method and not Qwen, raise an error
+        # If no method and not a recognized model, raise an error
         raise ValueError(
             f"Tokenizer {tokenizer.name_or_path} does not have a chat_template configured "
-            f"and is not the hardcoded 'Qwen' type. Cannot format prompts."
+            f"and is not a recognized model type (Qwen/Llama). Cannot format prompts."
         )
 
 def tokenize_prompts(prompts: List[str], tokenizer: AutoTokenizer) -> List[str]:
     if tokenizer.pad_token is None:
         logger.warning("Tokenizer does not have a pad token. Setting to eos_token.")
         tokenizer.pad_token = tokenizer.eos_token
-        # No need to update model.tokenizer separately if using model.tokenizer directly
+
     if tokenizer.padding_side != 'left':
             logger.warning(f"Tokenizer padding side is '{tokenizer.padding_side}'. Forcing to 'left'.")
             tokenizer.padding_side = 'left'
-    return tokenizer(prompts, padding=True,truncation=False, return_tensors="pt").input_ids
+    return tokenizer(prompts, padding=True,truncation=False, return_tensors="pt")
 
 def hooked_transformer_path(model: HookedTransformer) -> str:
     return model.cfg.tokenizer_name
@@ -102,8 +113,17 @@ class DiffInMeans(ModelManipulation):
         self.path = path or "jailbreaks/checkpoints/diff-in-means.pt"
         self.directions = self.load_directions(self.path) if use_cache else {}
         self.hf_token = hf_token
-        
+    
     def apply(self, model: AutoModelForCausalLM) -> str:
+        model = self.load_model(model.name_or_path)
+        tokenizer = self.load_tokenizer(model.name_or_path)
+
+        formatted_prompts = format_prompts(prompts, tokenizer)
+        ids = tokenize_prompts(formatted_prompts, tokenizer).to(self.device)
+        
+        
+        
+    def old_apply(self, model: AutoModelForCausalLM) -> str:
         original_generate = model.generate
         if not isinstance(model, HookedTransformer):
             model = self._convert_to_hooked_transformer(model)
@@ -161,14 +181,6 @@ class DiffInMeans(ModelManipulation):
     
     def load_tokenizer(self, model_path: str) -> AutoTokenizer:
         return AutoTokenizer.from_pretrained(model_path, device_map="auto", use_auth_token=self.hf_token)
-    
-    def get_last_position_logits(self, model, harmful_toks, harmless_toks, hooks=None) -> torch.Tensor:
-        """Get logits at last position for harmful and harmless inputs."""
-        with model.hooks(hooks) if hooks else contextlib.nullcontext():
-            harmful_logits = model(harmful_toks)
-            harmless_logits = model(harmless_toks)
-        
-        return harmful_logits[:, -1, :], harmless_logits[:, -1, :]
 
     def kl_div(self, probs_a, probs_b, epsilon=1e-6):
         """Calculate KL divergence between two probability distributions."""
@@ -207,23 +219,11 @@ class DiffInMeans(ModelManipulation):
         model = self.load_model(model_path)
         tokenizer = AutoTokenizer.from_pretrained(model_path, device_map="auto", use_auth_token=self.hf_token)
 
-        # Ensure tokenizer has a padding token and correct padding side (as before)
-        if tokenizer.pad_token is None:
-            logger.warning("Tokenizer does not have a pad token. Setting to eos_token.")
-            tokenizer.pad_token = tokenizer.eos_token
-            # No need to update model.tokenizer separately if using model.tokenizer directly
-        if tokenizer.padding_side != 'left':
-             logger.warning(f"Tokenizer padding side is '{tokenizer.padding_side}'. Forcing to 'left'.")
-             tokenizer.padding_side = 'left'
-
-        # --- Prepare Prompts and Tokens ---
-        # Format prompts using the appropriate chat template
         formatted_harmful_prompts = format_prompts(harmful_prompts, tokenizer)
         formatted_harmless_prompts = format_prompts(harmless_prompts, tokenizer)
 
-        # Tokenize prompts
-        harmful_toks = tokenize_prompts(formatted_harmful_prompts, tokenizer).to(self.device)
-        harmless_toks = tokenize_prompts(formatted_harmless_prompts, tokenizer).to(self.device)
+        harmful_toks = tokenize_prompts(formatted_harmful_prompts, tokenizer).input_ids.to(self.device)
+        harmless_toks = tokenize_prompts(formatted_harmless_prompts, tokenizer).input_ids.to(self.device)
 
         if harmful_toks.numel() == 0 or harmless_toks.numel() == 0:
              raise ValueError("Tokenization resulted in empty tensors. Check input prompts.")
@@ -579,8 +579,8 @@ class DiffInMeans(ModelManipulation):
         formatted_harmless_prompts = format_prompts(harmless_prompts, tokenizer)
 
         # Tokenize prompts
-        harmful_toks = tokenize_prompts(formatted_harmful_prompts, tokenizer).to(self.device)
-        harmless_toks = tokenize_prompts(formatted_harmless_prompts, tokenizer).to(self.device)
+        harmful_toks = tokenize_prompts(formatted_harmful_prompts, tokenizer).input_ids.to(self.device)
+        harmless_toks = tokenize_prompts(formatted_harmless_prompts, tokenizer).input_ids.to(self.device)
         default_generation_kwargs = {
             "max_new_tokens": 50,
             "eos_token_id": tokenizer.eos_token_id,
@@ -624,7 +624,7 @@ class DiffInMeans(ModelManipulation):
         gc.collect()
         
         formatted_prompts = format_prompts(prompts, tokenizer)
-        toks = tokenize_prompts(formatted_prompts, tokenizer).to(self.device)
+        toks = tokenize_prompts(formatted_prompts, tokenizer).input_ids.to(self.device)
         
         baseline_outputs_ids = model.generate(toks, **default_generation_kwargs)
         
@@ -664,7 +664,7 @@ class DiffInMeans(ModelManipulation):
     # def generate_completion(self, model_path: str, prompt: str, **kwargs) -> str:
     #     model = self.load_model(model_path)
     #     hooks = self.model2hooks[model_path]
-    #     toks = tokenize_prompts([prompt], model.tokenizer)
+    #     toks = tokenize_prompts([prompt], model.tokenizer).input_ids.to(self.device)
     #     with model.hooks(hooks):
     #         output = model.generate(toks, **kwargs)
     #     return model.tokenizer.decode(output[0])
