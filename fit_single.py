@@ -1,4 +1,5 @@
 from jailbreaks.methods.model import DiffInMeans
+from jailbreaks.utils.model_loading import load_hooked_transformer, load_tokenizer
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 import requests
@@ -8,11 +9,6 @@ from jailbreaks.data import get_advbench_instructions, get_harmless_instructions
 import torch
 
 import logging
-
-import os
-HF_TOKEN = os.getenv('HUGGINGFACE_HUB_TOKEN')
-if not HF_TOKEN:
-    raise ValueError("Please set the HUGGINGFACE_HUB_TOKEN environment variable.")
 
 logger = logging.getLogger("Ablation-TEST")
 
@@ -41,9 +37,9 @@ model_path = "mistralai/Mistral-7B-Instruct-v0.1"
 #model_path = "Qwen/Qwen2.5-14B-Instruct" # out of memory
 
 
-tokenizer = AutoTokenizer.from_pretrained(model_path, token=HF_TOKEN)
+tokenizer = load_tokenizer(model_path)
 # Instantiate DiffInMeans - Assuming it handles internal device placement correctly
-d = DiffInMeans(use_cache=True, hf_token=HF_TOKEN)
+d = DiffInMeans(use_cache=True)
 
 
 

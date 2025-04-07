@@ -1,5 +1,5 @@
 from jailbreaks.methods.base_method import ModelManipulation
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoModelForCausalLM
 
 import torch
 from typing import Dict, Any, List, Tuple, Callable
@@ -20,6 +20,8 @@ import gc
 
 from jailbreaks.utils.refusal import is_refusal
 from jailbreaks.utils.tokenization import format_prompts, tokenize_prompts
+from jailbreaks.utils.model_loading import load_hooked_transformer, load_tokenizer
+
 logger = logging.getLogger("DiffInMeans")
 
 logging.basicConfig(
@@ -46,16 +48,15 @@ def generate_hooks(model: HookedTransformer, direction: Float[Tensor, "d_act"]):
     return fwd_hooks
 
 class DiffInMeans(ModelManipulation):
-    def __init__(self, path: str = None, use_cache: bool = True, hf_token: str = None):
+    def __init__(self, path: str = None, use_cache: bool = True):
         super().__init__()
         self.name = "diff-in-means"
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self.path = path or "jailbreaks/checkpoints/diff-in-means.pt"
         self.directions = self.load_directions(self.path) if use_cache else {}
-        self.hf_token = hf_token
     
     def apply(self, model_path: str) -> str:
-        model = self.load_model(model_path)
+        model = load_hooked_transformer(model_path)
         hooks = self.get_hooks(model)
         
         original_generate = model.generate
@@ -89,24 +90,8 @@ class DiffInMeans(ModelManipulation):
         return directions
     
     def _convert_to_hooked_transformer(self, model: AutoModelForCausalLM) -> HookedTransformer:
-        return self.load_model(model.name_or_path)
+        return load_hooked_transformer(model.name_or_path)
     
-    def load_model(self, model_path: str) -> HookedTransformer:
-        logger.info(f"Loading {model_path} as HookedTransformer")
-        model = HookedTransformer.from_pretrained_no_processing(
-            model_path,
-            device=self.device,
-            dtype=torch.float16,
-            default_padding_side='left',
-            #fp16=True,
-            trust_remote_code=True,
-            use_auth_token=self.hf_token
-        )
-        return model
-    
-    def load_tokenizer(self, model_path: str) -> AutoTokenizer:
-        return AutoTokenizer.from_pretrained(model_path, device_map="auto", use_auth_token=self.hf_token)
-
     def kl_div(self, probs_a, probs_b, epsilon=1e-6):
         """Calculate KL divergence between two probability distributions."""
         # Ensure inputs are probabilities (sum to 1) and non-negative
@@ -141,8 +126,8 @@ class DiffInMeans(ModelManipulation):
             raise ValueError("Harmful and harmless prompts lists cannot be empty for fitting.")
 
         logger.info(f"Loading model {model_path}")
-        model = self.load_model(model_path)
-        tokenizer = AutoTokenizer.from_pretrained(model_path, device_map="auto", use_auth_token=self.hf_token)
+        model = load_hooked_transformer(model_path)
+        tokenizer = load_tokenizer(model_path)
 
         formatted_harmful_prompts = format_prompts(harmful_prompts, tokenizer)
         formatted_harmless_prompts = format_prompts(harmless_prompts, tokenizer)
