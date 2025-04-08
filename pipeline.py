@@ -193,7 +193,7 @@ class JailbreakPipeline:
                         logger.info(f"    Generating with method combo: {combo_name}")
                         
                         # Create LLM with the method combo
-                        jailbreak_model = LLM(model_path, method_combo, device=self.device)
+                        jailbreak_model = LLM(model_path, method_combo)
                         
                         responses = []
                         generation_start = time.time()
