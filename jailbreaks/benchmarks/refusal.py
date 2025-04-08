@@ -18,6 +18,9 @@ class RefusalBenchmark(Benchmark):
         self.prompts = prompts
         self.max_new_tokens = max_new_tokens
     
+    def get_prompts(self):
+        return self.prompts
+    
     def evaluate(self, model: LLM):
         logger.info(f"Running {self.name} benchmark with {len(self.prompts)} samples")
         

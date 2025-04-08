@@ -46,13 +46,15 @@ class LLM:
     
     def _remove_prompt(self, prompt: str, response: str) -> str:
         return response[len(prompt):].strip()
-
-    def generate(self, prompt, decode:bool=True, return_input:bool=False, only_new_tokens:bool=True, **kwargs):
+    
+    def prepare_prompt(self, prompt: str) -> str:
         for method in self.methods:
             if isinstance(method, PromptInjection):
                 prompt = method.preprocess(prompt, self.model.config.name_or_path)
-            # TODO: fix prefix injection with chat templates
-    
+        return prompt
+
+    def generate(self, prompt, decode:bool=True, return_input:bool=False, only_new_tokens:bool=True, **kwargs):
+        prompt = self.prepare_prompt(prompt)
         inputs = tokenize_prompts(prompt, self.tokenizer)
         
         for method in self.methods:
