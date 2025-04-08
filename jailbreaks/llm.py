@@ -52,8 +52,8 @@ class LLM:
         # TODO: fix prefix injection with chat templates
         return prompt
     
-    def generate(self, prompt, decode:bool=True, return_input:bool=False, only_new_tokens:bool=True, **kwargs):
-        return self.generate_batch([prompt], decode, return_input, only_new_tokens, **kwargs)[0]
+    def generate(self, prompt, **kwargs):
+        return self.generate_batch([prompt], **kwargs)[0]
 
     def generate_batch(self, prompts, **kwargs):
         prompts = [self.prepare_prompt(prompt) for prompt in prompts]
