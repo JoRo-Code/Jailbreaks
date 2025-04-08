@@ -478,7 +478,7 @@ def main():
         [],  # Baseline (no methods)
     ]
 
-    benchmark = RefusalBenchmark(prompts=get_advbench_instructions()[:50], max_new_tokens=50)
+    benchmark = RefusalBenchmark(prompts=get_advbench_instructions()[:3], max_new_tokens=50)
     
     evaluators = [
         JailbreakSuccessEvaluator(),

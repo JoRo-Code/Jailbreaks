@@ -44,48 +44,33 @@ class LLM:
         inputs = tokenize_prompts(format_prompts(prompts, self.tokenizer), self.tokenizer)
         return inputs
     
-    def _remove_prompt(self, prompt: str, response: str) -> str:
-        return response[len(prompt):].strip()
-    
     def prepare_prompt(self, prompt: str) -> str:
         for method in self.methods:
             if isinstance(method, PromptInjection):
                 prompt = method.preprocess(prompt, self.model.config.name_or_path)
+        prompt = format_prompts([prompt], self.tokenizer)[0]
+        # TODO: fix prefix injection with chat templates
         return prompt
-
+    
     def generate(self, prompt, decode:bool=True, return_input:bool=False, only_new_tokens:bool=True, **kwargs):
-        prompt = self.prepare_prompt(prompt)
-        inputs = tokenize_prompts(prompt, self.tokenizer)
+        return self.generate_batch([prompt], decode, return_input, only_new_tokens, **kwargs)[0]
+
+    def generate_batch(self, prompts, **kwargs):
+        prompts = [self.prepare_prompt(prompt) for prompt in prompts]
+        toks = tokenize_prompts(prompts, self.tokenizer)
+        inputs = toks.input_ids
         
         for method in self.methods:
             if isinstance(method, ModelManipulation):
                 self.model = method.apply(self.name)
+                # TODO: only apply once
                 # potentially add multi hook support
         
-        output_text = None
-        for method in self.methods:
-            if isinstance(method, GenerationExploit):
-                output_text = method.generate(
-                    model=self.model,
-                    inputs=inputs,
-                    tokenizer=self.tokenizer,
-                    **kwargs
-                )
+        output_tokens = self.model.generate(inputs, **kwargs)
+        output = [self.tokenizer.decode(o[inputs.shape[1]:], skip_special_tokens=True) for o in output_tokens]
         
-        if not output_text:
-            output_tokens = self.model.generate(**inputs, **kwargs)
-            output_text = self.tokenizer.decode(output_tokens[0], skip_special_tokens=True)
+        return output
         
-        if only_new_tokens:
-            output_text = self._remove_prompt(prompt, output_text)
         
-        output = output_text
-        if not decode:
-            output = self.tokenizer.encode(output_text, add_special_tokens=True)
         
-        logger.debug(f"output: {output_text}\n\n")
-        
-        if return_input:
-            return output, prompt
-        else:
-            return output
+
