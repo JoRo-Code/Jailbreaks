@@ -1,4 +1,3 @@
-
 import time
 from typing import List, Dict, Any, Optional
 import wandb
@@ -93,7 +92,8 @@ class JailbreakPipeline:
         benchmarks: List = None,
         evaluators: List = None,
         device: str = None,
-        output_dir: str = "results"
+        output_dir: str = "results",
+        run_id: Optional[str] = None  # Add run_id for continuing existing runs
     ):
         self.model_paths = model_paths or []
         self.method_combinations = method_combinations or [[]]
@@ -104,25 +104,39 @@ class JailbreakPipeline:
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.fitted_methods = {}  # Store fitted methods
         self.generated_responses = {}  # Store generated responses by benchmark and method combo
+        self.run_id = run_id or str(uuid.uuid4())[:8]  # Generate a run ID if not provided
+        self.results_summary = {}  # Store summary results for comparison
     
-    def run(self, experiment_name: str = "jailbreak_evaluation", project_name: str = "jailbreak-research"):
+    def run(self, experiment_name: str = "jailbreak_evaluation", project_name: str = "jailbreak-research", resume: bool = False):
         logger.info(f"Starting jailbreak pipeline with experiment: {experiment_name}")
         
         # 1. Fit methods
         self._fit_methods()
         
-        # Initialize W&B
-        wandb.init(project=project_name, name=experiment_name)
-        logger.info(f"W&B experiment initialized: {experiment_name}")
+        # Initialize W&B with consistent run_id to enable resuming/continuing
+        run_name = f"{experiment_name}_{self.run_id}"
         
-        # 2. Generate responses
-        self._generate_responses()
+        # Initialize W&B and keep it open for the whole pipeline execution
+        wandb.init(project=project_name, name=run_name, id=self.run_id if resume else None)
+        logger.info(f"W&B experiment initialized: {run_name}")
         
-        # 3. Evaluate responses with different evaluators
-        self._evaluate_responses()
+        try:
+            # 2. Generate responses
+            self._generate_responses()
+            
+            # 3. Evaluate responses with different evaluators
+            self._evaluate_responses()
+            
+            # 4. Create and log summary comparison tables
+            self._create_comparison_tables()
+            
+            logger.info(f"Pipeline execution completed")
+            logger.info(f"Results stored in W&B project: {project_name}, experiment: {run_name}")
+        finally:
+            # Ensure we finish the run properly
+            wandb.finish()
         
-        logger.info(f"Pipeline execution completed")
-        logger.info(f"Results stored in W&B project: {project_name}, experiment: {experiment_name}")
+        return self.run_id  # Return run_id so it can be used for continuing experiments
     
     def _fit_methods(self):
         """Fit all methods that require fitting"""
@@ -156,101 +170,97 @@ class JailbreakPipeline:
         """Generate responses using fitted methods on benchmarks"""
         logger.info("Step 2: Generating responses")
         
-        run_id = str(uuid.uuid4())[:8]
         generation_start_time = time.time()
         
-        with wandb.init(project="jailbreak-research", name=f"response_generation_{run_id}", 
-                       job_type="generation", group="response_generation") as run:
+        # Track overall generation metrics
+        overall_metrics = {
+            "total_models": len(self.model_paths),
+            "total_method_combos": len(self.method_combinations),
+            "total_benchmarks": len(self.benchmarks),
+        }
+        wandb.config.update(overall_metrics)
+        
+        for benchmark in self.benchmarks:
+            benchmark_name = benchmark.__str__()
+            benchmark_key = benchmark_name.lower().replace(" ", "_")
             
-            # Track overall generation metrics
-            overall_metrics = {
-                "total_models": len(self.model_paths),
-                "total_method_combos": len(self.method_combinations),
-                "total_benchmarks": len(self.benchmarks),
-            }
-            wandb.config.update(overall_metrics)
+            logger.info(f"Generating responses for benchmark: {benchmark_name}")
+            self.generated_responses[benchmark_key] = {}
             
-            for benchmark in self.benchmarks:
-                benchmark_name = benchmark.__str__()
-                benchmark_key = benchmark_name.lower().replace(" ", "_")
+            for model_path in self.model_paths:
+                model_short_name = model_path.split("/")[-1]
+                logger.info(f"  Using model: {model_short_name}")
                 
-                logger.info(f"Generating responses for benchmark: {benchmark_name}")
-                self.generated_responses[benchmark_key] = {}
-                
-                for model_path in self.model_paths:
-                    model_short_name = model_path.split("/")[-1]
-                    logger.info(f"  Using model: {model_short_name}")
+                for method_combo in self.method_combinations:
+                    if not method_combo:
+                        combo_name = "baseline"
+                        method_configs = [{"name": "baseline"}]
+                    else:
+                        combo_name = "_".join(method.__str__().lower() for method in method_combo)
+                        method_configs = [self._get_method_config(method) for method in method_combo]
                     
-                    for method_combo in self.method_combinations:
-                        if not method_combo:
-                            combo_name = "baseline"
-                            method_configs = [{"name": "baseline"}]
-                        else:
-                            combo_name = "_".join(method.__str__().lower() for method in method_combo)
-                            method_configs = [self._get_method_config(method) for method in method_combo]
-                        
-                        combo_key = combo_name.lower().replace(" ", "_")
-                        logger.info(f"    Generating with method combo: {combo_name}")
-                        
-                        # Create LLM with the method combo
-                        jailbreak_model = LLM(model_path, method_combo)
-                        
-                        responses = []
-                        generation_start = time.time()
-                        
-                        # Get prompts from benchmark
-                        prompts = benchmark.get_prompts()
-                        
-                        for i, prompt in enumerate(tqdm(prompts, desc=f"{model_short_name}_{combo_name}")):
-                            try:
-                                # Generate response
-                                raw_prompt = jailbreak_model.prepare_prompt(prompt)
-                                response = jailbreak_model.generate(prompt)
-                                
-                                # Store generated response
-                                gen_response = GeneratedResponse(
-                                    prompt=prompt,
-                                    raw_prompt=raw_prompt,
-                                    response=response,
-                                    model_id=model_path,
-                                    method_combo=combo_name,
-                                    metadata={
-                                        "benchmark": benchmark_name,
-                                        "prompt_index": i,
-                                        "timestamp": time.time()
-                                    }
-                                )
-                                responses.append(gen_response)
-                                
-                            except Exception as e:
-                                logger.error(f"Error generating response for prompt {i}: {str(e)}")
-                        
-                        generation_time = time.time() - generation_start
-                        
-                        # Store responses
-                        key = f"{model_short_name}_{combo_key}"
-                        self.generated_responses[benchmark_key][key] = responses
-                        
-                        # Log generation metrics
-                        wandb.log({
-                            "benchmark": benchmark_name,
-                            "model": model_short_name,
-                            "method_combo": combo_name,
-                            "num_responses": len(responses),
-                            "generation_time": generation_time,
-                            "avg_generation_time": generation_time / max(len(prompts), 1)
-                        })
-                        
-                        # Create responses table
-                        response_table = wandb.Table(columns=["prompt", "raw_prompt", "response", "model", "method_combo"])
-                        for resp in responses:
-                            response_table.add_data(resp.prompt, resp.raw_prompt, resp.response, model_short_name, combo_name)
-                        
-                        # Log table
-                        wandb.log({f"{benchmark_key}_{model_short_name}_{combo_key}_responses": response_table})
-                        
-                        # Save responses to file
-                        self._save_responses(responses, benchmark_key, model_short_name, combo_key)
+                    combo_key = combo_name.lower().replace(" ", "_")
+                    logger.info(f"    Generating with method combo: {combo_name}")
+                    
+                    # Create LLM with the method combo
+                    jailbreak_model = LLM(model_path, method_combo)
+                    
+                    responses = []
+                    generation_start = time.time()
+                    
+                    # Get prompts from benchmark
+                    prompts = benchmark.get_prompts()
+                    
+                    for i, prompt in enumerate(tqdm(prompts, desc=f"{model_short_name}_{combo_name}")):
+                        try:
+                            # Generate response
+                            raw_prompt = jailbreak_model.prepare_prompt(prompt)
+                            response = jailbreak_model.generate(prompt)
+                            
+                            # Store generated response
+                            gen_response = GeneratedResponse(
+                                prompt=prompt,
+                                raw_prompt=raw_prompt,
+                                response=response,
+                                model_id=model_path,
+                                method_combo=combo_name,
+                                metadata={
+                                    "benchmark": benchmark_name,
+                                    "prompt_index": i,
+                                    "timestamp": time.time()
+                                }
+                            )
+                            responses.append(gen_response)
+                            
+                        except Exception as e:
+                            logger.error(f"Error generating response for prompt {i}: {str(e)}")
+                    
+                    generation_time = time.time() - generation_start
+                    
+                    # Store responses
+                    key = f"{model_short_name}_{combo_key}"
+                    self.generated_responses[benchmark_key][key] = responses
+                    
+                    # Log generation metrics
+                    wandb.log({
+                        "benchmark": benchmark_name,
+                        "model": model_short_name,
+                        "method_combo": combo_name,
+                        "num_responses": len(responses),
+                        "generation_time": generation_time,
+                        "avg_generation_time": generation_time / max(len(prompts), 1)
+                    })
+                    
+                    # Create responses table
+                    response_table = wandb.Table(columns=["prompt", "raw_prompt", "response", "model", "method_combo"])
+                    for resp in responses:
+                        response_table.add_data(resp.prompt, resp.raw_prompt, resp.response, model_short_name, combo_name)
+                    
+                    # Log table
+                    wandb.log({f"{benchmark_key}_{model_short_name}_{combo_key}_responses": response_table})
+                    
+                    # Save responses to file
+                    self._save_responses(responses, benchmark_key, model_short_name, combo_key)
         
         total_generation_time = time.time() - generation_start_time
         logger.info(f"Response generation completed in {total_generation_time:.2f}s")
@@ -263,72 +273,196 @@ class JailbreakPipeline:
             logger.warning("No evaluators provided. Skipping evaluation step.")
             return
         
+        # Initialize results structure if not already present
+        if not hasattr(self, 'evaluation_results'):
+            self.evaluation_results = {}
+        
         for evaluator in self.evaluators:
             evaluator_name = evaluator.__str__()
             logger.info(f"Evaluating with: {evaluator_name}")
             
-            run_id = str(uuid.uuid4())[:8]
-            with wandb.init(project="jailbreak-research", name=f"evaluation_{evaluator_name}_{run_id}", 
-                           job_type="evaluation", group="response_evaluation") as run:
+            if evaluator_name not in self.evaluation_results:
+                self.evaluation_results[evaluator_name] = {}
+            
+            for benchmark_key, model_method_responses in self.generated_responses.items():
+                if benchmark_key not in self.evaluation_results[evaluator_name]:
+                    self.evaluation_results[evaluator_name][benchmark_key] = {}
                 
-                wandb.config.update({
-                    "evaluator": evaluator_name,
-                    "evaluator_config": self._get_evaluator_config(evaluator)
-                })
+                logger.info(f"  Evaluating {benchmark_key} responses")
                 
-                for benchmark_key, model_method_responses in self.generated_responses.items():
-                    logger.info(f"  Evaluating {benchmark_key} responses")
+                for model_method_key, responses in model_method_responses.items():
+                    parts = model_method_key.split('_')
+                    method_combo = parts[-1]
+                    model_name = '_'.join(parts[:-1])
                     
-                    for model_method_key, responses in model_method_responses.items():
-                        model_name, method_combo = model_method_key.rsplit("_", 1)
-                        logger.info(f"    Evaluating {model_name} with {method_combo}")
+                    logger.info(f"    Evaluating {model_name} with {method_combo}")
+                    
+                    eval_start_time = time.time()
+                    
+                    # Evaluate responses
+                    try:
+                        metrics, sample_results = evaluator.evaluate(responses)
                         
-                        eval_start_time = time.time()
+                        # Create evaluation result
+                        eval_result = EvaluationResult(
+                            model_id=model_name,
+                            method_config={"name": method_combo},
+                            evaluator_name=evaluator_name,
+                            metrics=metrics,
+                            runtime_seconds=time.time() - eval_start_time
+                        )
                         
-                        # Evaluate responses
-                        try:
-                            metrics, sample_results = evaluator.evaluate(responses)
-                            
-                            # Create evaluation result
-                            eval_result = EvaluationResult(
-                                model_id=model_name,
-                                method_config={"name": method_combo},
-                                evaluator_name=evaluator_name,
-                                metrics=metrics,
-                                runtime_seconds=time.time() - eval_start_time
+                        # Add sample results
+                        for result in sample_results:
+                            eval_result.sample_results.append(result)
+                        
+                        # Store for summary tables
+                        if model_name not in self.evaluation_results[evaluator_name][benchmark_key]:
+                            self.evaluation_results[evaluator_name][benchmark_key][model_name] = {}
+                        
+                        self.evaluation_results[evaluator_name][benchmark_key][model_name][method_combo] = eval_result
+                        
+                        # Log metrics
+                        log_dict = {
+                            "benchmark": benchmark_key,
+                            "model": model_name,
+                            "method_combo": method_combo,
+                            **{f"metrics/{k}": v for k, v in metrics.items()},
+                            "evaluation_time": eval_result.runtime_seconds
+                        }
+                        wandb.log(log_dict)
+                        
+                        # Create results table
+                        results_table = wandb.Table(columns=["prompt", "response", "success", "score"])
+                        for result in sample_results:
+                            results_table.add_data(
+                                result.get("prompt", ""),
+                                result.get("response", ""),
+                                result.get("success", False),
+                                result.get("score", 0.0)
                             )
-                            
-                            # Add sample results
-                            for result in sample_results:
-                                eval_result.sample_results.append(result)
-                            
-                            # Log metrics
-                            wandb.log({
-                                "benchmark": benchmark_key,
-                                "model": model_name,
-                                "method_combo": method_combo,
-                                **{f"metrics/{k}": v for k, v in metrics.items()},
-                                "evaluation_time": eval_result.runtime_seconds
-                            })
-                            
-                            # Create results table
-                            results_table = wandb.Table(columns=["prompt", "response", "success", "score"])
-                            for result in sample_results:
-                                results_table.add_data(
-                                    result.get("prompt", ""),
-                                    result.get("response", ""),
-                                    result.get("success", False),
-                                    result.get("score", 0.0)
-                                )
-                            
-                            # Log table
-                            wandb.log({f"{benchmark_key}_{model_name}_{method_combo}_results": results_table})
-                            
-                            # Save evaluation results
-                            self._save_evaluation(eval_result, benchmark_key, model_name, method_combo, evaluator_name)
-                            
-                        except Exception as e:
-                            logger.error(f"Error evaluating {model_method_key}: {str(e)}")
+                        
+                        # Log table
+                        wandb.log({f"{benchmark_key}_{model_name}_{method_combo}_results": results_table})
+                        
+                        # Save evaluation results
+                        self._save_evaluation(eval_result, benchmark_key, model_name, method_combo, evaluator_name)
+                        
+                    except Exception as e:
+                        logger.error(f"Error evaluating {model_method_key}: {str(e)}")
+                        import traceback
+                        logger.error(traceback.format_exc())
+    
+    def _create_comparison_tables(self):
+        """Create and log summary comparison tables for methods and metrics"""
+        logger.info("Step 4: Creating comparison tables")
+        
+        if not hasattr(self, 'evaluation_results'):
+            logger.warning("No evaluation results found. Skipping comparison tables.")
+            return
+        
+        # For each evaluator and benchmark
+        for evaluator_name, benchmarks in self.evaluation_results.items():
+            for benchmark_key, models in benchmarks.items():
+                for model_name, method_results in models.items():
+                    # Create method comparison table
+                    comparison_data = []
+                    method_names = []
+                    metric_names = set()
+                    
+                    # Collect all metric names
+                    for method_name, eval_result in method_results.items():
+                        method_names.append(method_name)
+                        for metric_name in eval_result.metrics.keys():
+                            metric_names.add(metric_name)
+                    
+                    # Create table columns (method name + all metrics)
+                    columns = ["Method"] + list(metric_names)
+                    comparison_table = wandb.Table(columns=columns)
+                    
+                    # Add rows
+                    for method_name, eval_result in method_results.items():
+                        row = [method_name]
+                        for metric_name in metric_names:
+                            row.append(eval_result.metrics.get(metric_name, None))
+                        comparison_table.add_data(*row)
+                        
+                        # Also store as a dictionary for easier access
+                        method_data = {"Method": method_name}
+                        for metric_name in metric_names:
+                            method_data[metric_name] = eval_result.metrics.get(metric_name, None)
+                        comparison_data.append(method_data)
+                    
+                    # Log comparison table
+                    table_name = f"{benchmark_key}_{model_name}_{evaluator_name}_comparison"
+                    wandb.log({table_name: comparison_table})
+                    
+                    # Store summary data
+                    if benchmark_key not in self.results_summary:
+                        self.results_summary[benchmark_key] = {}
+                    if model_name not in self.results_summary[benchmark_key]:
+                        self.results_summary[benchmark_key][model_name] = {}
+                    
+                    self.results_summary[benchmark_key][model_name][evaluator_name] = comparison_data
+                    
+                    # Also log as a bar chart for key metrics
+                    for metric_name in metric_names:
+                        # Create a data table for the bar chart
+                        bar_data = wandb.Table(columns=["Method", metric_name])
+                        for method, results in method_results.items():
+                            bar_data.add_data(method, results.metrics.get(metric_name, 0))
+                        
+                        # Log bar chart with correct parameters
+                        wandb.log({
+                            f"{benchmark_key}_{model_name}_{evaluator_name}_{metric_name}_chart": 
+                            wandb.plot.bar(
+                                bar_data,
+                                "Method", 
+                                metric_name,
+                                title=f"{model_name}: {metric_name} by Method"
+                            )
+                        })
+        
+        # Create an overall summary table with all models, methods and key metrics
+        self._create_overall_summary()
+    
+    def _create_overall_summary(self):
+        """Create an overall summary table with all results"""
+        all_benchmarks = list(self.results_summary.keys())
+        all_models = set()
+        all_evaluators = set()
+        all_methods = set()
+        
+        # Collect all unique values
+        for benchmark, models in self.results_summary.items():
+            for model, evaluators in models.items():
+                all_models.add(model)
+                for evaluator, method_data in evaluators.items():
+                    all_evaluators.add(evaluator)
+                    for item in method_data:
+                        all_methods.add(item["Method"])
+        
+        # Create a flat summary table
+        columns = ["Benchmark", "Model", "Method", "Evaluator", "Metric", "Value"]
+        summary_table = wandb.Table(columns=columns)
+        
+        for benchmark, models in self.results_summary.items():
+            for model, evaluators in models.items():
+                for evaluator, method_data in evaluators.items():
+                    for item in method_data:
+                        method = item["Method"]
+                        for metric, value in item.items():
+                            if metric != "Method":
+                                summary_table.add_data(benchmark, model, method, evaluator, metric, value)
+        
+        wandb.log({"overall_summary": summary_table})
+        
+        # Also save as JSON
+        summary_path = self.output_dir / f"summary_{self.run_id}.json"
+        with open(summary_path, 'w') as f:
+            json.dump(self.results_summary, f, indent=2)
+        
+        logger.info(f"Saved summary to {summary_path}")
     
     def _get_method_config(self, method):
         """Extract configuration from a method instance"""
