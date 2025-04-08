@@ -13,12 +13,12 @@ from jailbreaks.utils.model_loading import load_model, load_tokenizer
 from jailbreaks.utils.tokenization import format_prompts, tokenize_prompts
 
 class LLM:
-    def __init__(self, model_path: str, methods: List[JailBreakMethod], device: str = "cpu"):
+    def __init__(self, model_path: str, methods: List[JailBreakMethod]):
         self.model = load_model(model_path)
         self.name = model_path
         self.tokenizer = load_tokenizer(model_path)
         self.methods = methods
-        self.device = device
+        self.device = "cuda" if torch.cuda.is_available() else "cpu"
     
     def to(self, device):
         if self.device != device:
@@ -57,7 +57,7 @@ class LLM:
 
     def generate_batch(self, prompts, **kwargs):
         prompts = [self.prepare_prompt(prompt) for prompt in prompts]
-        toks = tokenize_prompts(prompts, self.tokenizer)
+        toks = tokenize_prompts(prompts, self.tokenizer).to(self.device)
         inputs = toks.input_ids
         
         for method in self.methods:
