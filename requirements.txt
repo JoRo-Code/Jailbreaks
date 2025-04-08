@@ -20,4 +20,5 @@ tqdm
 nanogcg
 
 colorama
+wandb
 

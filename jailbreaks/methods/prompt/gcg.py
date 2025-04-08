@@ -132,12 +132,15 @@ class GCG(PromptInjection):
             os.remove(self.path)
             logger.info(f"Deleted GCG results file: {self.path}")
     
-    def fit(self, model_names: list[str], refit: bool = True):
+    def fit_models(self, model_names: list[str], refit: bool = True):
         for model_name in model_names:
-            if refit or model_name not in self.results:
-                self.fit_model(model_name)
+            self.fit(model_name, refit)
     
-    def fit_model(self, model_name: str):
+    def fit(self, model_name: str, refit: bool = True):
+        if not refit and model_name in self.results:
+            logger.info(f"Skipping fitting for {model_name} because it already exists")
+            return
+
         logger.info(f"Fitting GCG for {model_name}")
         
         self.load()

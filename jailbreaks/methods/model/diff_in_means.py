@@ -73,12 +73,15 @@ def kl_div(probs_a, probs_b, epsilon=1e-6):
     return torch.sum(kl_term, dim=-1).mean()
 
 class DiffInMeans(ModelManipulation):
-    def __init__(self, path: str = None, use_cache: bool = True):
+    def __init__(self, harmful_prompts: List[str], harmless_prompts: List[str], generation_kwargs: Dict = None, use_cache: bool = True, path: str = None):
         super().__init__()
         self.name = "diff-in-means"
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self.path = path or "checkpoints/diff-in-means.pt"
         self.directions = self.load_directions(self.path) if use_cache else {}
+        self.harmful_prompts = harmful_prompts
+        self.harmless_prompts = harmless_prompts
+        self.generation_kwargs = generation_kwargs
     
     def apply(self, model_path: str) -> str:
         model = load_hooked_transformer(model_path)
@@ -123,8 +126,22 @@ class DiffInMeans(ModelManipulation):
         model_path = hooked_transformer_path(model)
         direction = self.get_direction(model_path)
         return generate_hooks(model, direction)
+    
 
-    def fit(self, model_path: str, harmful_prompts: List[str], harmless_prompts: List[str], refit=False, generation_kwargs: Dict = None) -> str:
+    def fit(self, model_path: str, refit: bool = True) -> str:
+        """
+        generate candidate hook directions
+        evaluate directions
+        select best direction
+        save direction
+        
+        logging and cache cleanups
+        """
+        
+        harmful_prompts = self.harmful_prompts
+        harmless_prompts = self.harmless_prompts
+        generation_kwargs = self.generation_kwargs
+        
         if model_path in self.directions and not refit:
             logger.info(f"Skipping fitting for model {model_path} because it already exists")
             return self.get_direction(model_path)
