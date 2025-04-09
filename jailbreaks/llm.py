@@ -65,6 +65,9 @@ class LLM:
                 self.model = method.apply(self.name)
                 # TODO: only apply once
                 # potentially add multi hook support
+        for method in self.methods:
+            if isinstance(method, GenerationExploit):
+                self.model = method.generate(self.model, self.tokenizer, inputs, **kwargs)
         
         output_tokens = self.model.generate(inputs, **kwargs)
         output = [self.tokenizer.decode(o[inputs.shape[1]:], skip_special_tokens=True) for o in output_tokens]
