@@ -87,6 +87,7 @@ class EvaluationResult:
 class JailbreakPipeline:    
     def __init__(
         self, 
+        project_name: str,
         model_paths: List[str] = None,
         method_combinations: List[List[JailBreakMethod]] = None,
         benchmarks: List = None,
@@ -113,66 +114,45 @@ class JailbreakPipeline:
         self.fitted_methods = {}  
         self.generated_responses = {}  
         self.run_id = run_id or str(uuid.uuid4())[:8]  
-        self.results_summary = {}  
+        self.results_summary = {}
+        self.project_name = project_name
     
-    def run(self, experiment_name: str = "jailbreak_evaluation", project_name: str = "jailbreak-research", 
-            resume: bool = False, only_generate: bool = False, only_evaluate: bool = False, 
-            only_aggregate: bool = False, responses_path: str = None):
-        """
-        Run the complete pipeline or specific stages.
+    def fit_methods(self):
+        self._fit_methods()
+    
+    def generate_responses(self):
+        run_name = f"responses_{self.run_id}"
         
-        Args:
-            experiment_name: Name of the experiment for W&B
-            project_name: Name of the W&B project
-            resume: Whether to resume an existing W&B run
-            only_generate: Only run the generation stage
-            only_evaluate: Only run the evaluation stage
-            only_aggregate: Only run the aggregation stage
-            responses_path: Path to load pre-generated responses (for evaluation only)
-        """
-        logger.info(f"Starting jailbreak pipeline with experiment: {experiment_name}")
-        
-        # Initialize W&B with consistent run_id to enable resuming/continuing
-        run_name = f"{experiment_name}_{self.run_id}"
-        
-        wandb.init(project=project_name, name=run_name, id=self.run_id if resume else None)
+        wandb.init(project=self.project_name, name=run_name, id=self.run_id)
         logger.info(f"W&B experiment initialized: {run_name}")
+        self._generate_responses()
+        wandb.finish()
+
+    def evaluate_responses(self):
+        self._load_responses(self.responses_dir)
+        run_name = f"evaluation_{self.run_id}"
+        wandb.init(project=self.project_name, name=run_name, id=self.run_id)
+        logger.info(f"W&B experiment initialized: {run_name}")
+        self._evaluate_responses()
+        wandb.finish()
+    
+    def aggregate_results(self):
+        self._load_evaluation_results()
+        logger.info("Step 4: Creating comparison tables")
         
-        try:
-            # Determine which stages to run
-            run_all = not (only_generate or only_evaluate or only_aggregate)
-            
-            # 1. Fit methods and generate responses
-            if run_all or only_generate:
-                self._fit_methods()
-                self._generate_responses()
-            
-            # Load responses if evaluation only and path provided
-            if only_evaluate and responses_path:
-                self._load_responses(responses_path)
-            
-            # Load evaluation results if only aggregating
-            if only_aggregate:
-                self._load_evaluation_results()
-            
-            # 2. Evaluate responses with different evaluators
-            if run_all or only_evaluate:
-                self._evaluate_responses()
-            
-            # 3. Create and log summary comparison tables
-            if run_all or only_aggregate:
-                self._create_comparison_tables()
-            
-            logger.info(f"Pipeline execution completed")
-            logger.info(f"Results stored in W&B project: {project_name}, experiment: {run_name}")
-        finally:
-            # Ensure we finish the run properly
-            wandb.finish()
+        if not hasattr(self, 'evaluation_results'):
+            logger.warning("No evaluation results found. Skipping comparison tables.")
+            return
         
-        return self.run_id
+        for evaluator_name, benchmarks in self.evaluation_results.items():
+            for benchmark_key, models in benchmarks.items():
+                for model_name, method_results in models.items():
+                    self._create_evaluation_table(model_name, benchmark_key, evaluator_name, method_results)
+
+    
+
     
     def _fit_methods(self):
-        """Fit all methods that require fitting"""
         logger.info("Step 1: Fitting methods")
         
         for method_combo in self.method_combinations:
@@ -200,7 +180,6 @@ class JailbreakPipeline:
                     logger.info(f"  Method {method_name} doesn't require fitting")
     
     def _generate_responses(self):
-        """Generate responses using fitted methods on benchmarks"""
         logger.info("Step 2: Generating responses")
         
         generation_start_time = time.time()
@@ -383,117 +362,77 @@ class JailbreakPipeline:
                         logger.error(f"Error evaluating {model_method_key}: {str(e)}")
                         import traceback
                         logger.error(traceback.format_exc())
-    
-    def _create_comparison_tables(self):
-        """Create and log summary comparison tables for methods and metrics"""
-        logger.info("Step 4: Creating comparison tables")
-        
-        if not hasattr(self, 'evaluation_results'):
-            logger.warning("No evaluation results found. Skipping comparison tables.")
-            return
-        
-        # For each evaluator and benchmark
-        for evaluator_name, benchmarks in self.evaluation_results.items():
-            for benchmark_key, models in benchmarks.items():
-                for model_name, method_results in models.items():
-                    # Create method comparison table
-                    comparison_data = []
-                    method_names = []
-                    metric_names = set()
-                    
-                    # Collect all metric names
-                    for method_name, eval_result in method_results.items():
-                        method_names.append(method_name)
-                        for metric_name in eval_result.metrics.keys():
-                            metric_names.add(metric_name)
-                    
-                    # Create table columns (method name + all metrics)
-                    columns = ["Method"] + list(metric_names)
-                    comparison_table = wandb.Table(columns=columns)
-                    
-                    # Add rows
-                    for method_name, eval_result in method_results.items():
-                        row = [method_name]
-                        for metric_name in metric_names:
-                            row.append(eval_result.metrics.get(metric_name, None))
-                        comparison_table.add_data(*row)
                         
-                        # Also store as a dictionary for easier access
-                        method_data = {"Method": method_name}
-                        for metric_name in metric_names:
-                            method_data[metric_name] = eval_result.metrics.get(metric_name, None)
-                        comparison_data.append(method_data)
-                    
-                    # Log comparison table
-                    table_name = f"{benchmark_key}_{model_name}_{evaluator_name}_comparison"
-                    wandb.log({table_name: comparison_table})
-                    
-                    # Store summary data
-                    if benchmark_key not in self.results_summary:
-                        self.results_summary[benchmark_key] = {}
-                    if model_name not in self.results_summary[benchmark_key]:
-                        self.results_summary[benchmark_key][model_name] = {}
-                    
-                    self.results_summary[benchmark_key][model_name][evaluator_name] = comparison_data
-                    
-                    # Also log as a bar chart for key metrics
-                    for metric_name in metric_names:
-                        # Create a data table for the bar chart
-                        bar_data = wandb.Table(columns=["Method", metric_name])
-                        for method, results in method_results.items():
-                            bar_data.add_data(method, results.metrics.get(metric_name, 0))
-                        
-                        # Log bar chart with correct parameters
-                        wandb.log({
-                            f"{benchmark_key}_{model_name}_{evaluator_name}_{metric_name}_chart": 
-                            wandb.plot.bar(
-                                bar_data,
-                                "Method", 
-                                metric_name,
-                                title=f"{model_name}: {metric_name} by Method"
-                            )
-                        })
+    def _create_evaluation_table(self, model_name, benchmark_key, evaluator_name, method_results):
+        run_name = f"{model_name}_{self.run_id}"
+        wandb.init(project=self.project_name, name=run_name, id=run_name)
+        logger.info(f"W&B experiment initialized: {run_name}")
+
+        # Create method comparison table
+        comparison_data = []
+        method_names = []
+        metric_names = set()
         
-        # Create an overall summary table with all models, methods and key metrics
-        self._create_overall_summary()
-    
-    def _create_overall_summary(self):
-        """Create an overall summary table with all results"""
-        all_benchmarks = list(self.results_summary.keys())
-        all_models = set()
-        all_evaluators = set()
-        all_methods = set()
+        # Collect all metric names
+        for method_name, eval_result in method_results.items():
+            method_names.append(method_name)
+            for metric_name in eval_result.metrics.keys():
+                metric_names.add(metric_name)
         
-        # Collect all unique values
-        for benchmark, models in self.results_summary.items():
-            for model, evaluators in models.items():
-                all_models.add(model)
-                for evaluator, method_data in evaluators.items():
-                    all_evaluators.add(evaluator)
-                    for item in method_data:
-                        all_methods.add(item["Method"])
+        # Create table columns (method name + all metrics)
+        # columns = ["Method"] + list(metric_names)
+        # comparison_table = wandb.Table(columns=columns)
         
-        # Create a flat summary table
-        columns = ["Benchmark", "Model", "Method", "Evaluator", "Metric", "Value"]
-        summary_table = wandb.Table(columns=columns)
+        # Add rows
+        for method_name, eval_result in method_results.items():
+            # row = [method_name]
+            # for metric_name in metric_names:
+            #     row.append(eval_result.metrics.get(metric_name, None))
+            # comparison_table.add_data(*row)
+            
+            # Also store as a dictionary for easier access
+            method_data = {"Method": method_name}
+            for metric_name in metric_names:
+                method_data[metric_name] = eval_result.metrics.get(metric_name, None)
+            comparison_data.append(method_data)
         
-        for benchmark, models in self.results_summary.items():
-            for model, evaluators in models.items():
-                for evaluator, method_data in evaluators.items():
-                    for item in method_data:
-                        method = item["Method"]
-                        for metric, value in item.items():
-                            if metric != "Method":
-                                summary_table.add_data(benchmark, model, method, evaluator, metric, value)
+        # Log comparison table
+        table_name = f"{benchmark_key}_{model_name}_{evaluator_name}_comparison"
+        # wandb.log({table_name: comparison_table})
         
-        wandb.log({"overall_summary": summary_table})
+        # Store summary data
+        if benchmark_key not in self.results_summary:
+            self.results_summary[benchmark_key] = {}
+        if model_name not in self.results_summary[benchmark_key]:
+            self.results_summary[benchmark_key][model_name] = {}
         
-        # Also save as JSON
-        summary_path = self.output_dir / f"summary_{self.run_id}.json"
+        self.results_summary[benchmark_key][model_name][evaluator_name] = comparison_data
+        
+        # Also log as a bar chart for key metrics
+        for metric_name in metric_names:
+            # Create a data table for the bar chart
+            bar_data = wandb.Table(columns=["Method", metric_name])
+            for method, results in method_results.items():
+                bar_data.add_data(method, results.metrics.get(metric_name, 0))
+            
+            # Log bar chart with correct parameters
+            wandb.log({
+                f"{benchmark_key}_{evaluator_name}_{metric_name}_chart": 
+                wandb.plot.bar(
+                    bar_data,
+                    "Method",
+                    metric_name,
+                    title=f"{benchmark_key}-{evaluator_name}-{metric_name}"
+                )
+            })    
+
+        
+        summary_path = self.output_dir / f"summaries/{self.run_id}.json"
         with open(summary_path, 'w') as f:
             json.dump(self.results_summary, f, indent=2)
         
         logger.info(f"Saved summary to {summary_path}")
+        wandb.finish()
     
     def _get_method_config(self, method):
         """Extract configuration from a method instance"""
@@ -543,15 +482,6 @@ class JailbreakPipeline:
         
         logger.info(f"Saved evaluation results to {output_path}")
     
-    def generate_responses(self, experiment_name: str = "jailbreak_generation", project_name: str = "jailbreak-research"):
-        return self.run(experiment_name, project_name, only_generate=True)
-    
-    def evaluate_responses(self, responses_path=None, experiment_name: str = "jailbreak_evaluation", 
-                          project_name: str = "jailbreak-research"):
-        return self.run(experiment_name, project_name, only_evaluate=True, responses_path=responses_path)
-    
-    def aggregate_results(self, experiment_name: str = "jailbreak_aggregation", project_name: str = "jailbreak-research"):
-        return self.run(experiment_name, project_name, only_aggregate=True)
 
     def _load_responses(self, path):
         """Load pre-generated responses from a path"""
@@ -710,7 +640,7 @@ class JailbreakSuccessEvaluator(ResponseEvaluator):
             success = is_refusal(resp.response)
             if success:
                 successful += 1
-            
+           
             sample_results.append({
                 "prompt": resp.prompt,
                 "response": resp.response,
@@ -789,6 +719,7 @@ def main():
     ]
     
     pipe = JailbreakPipeline(
+        project_name="jailbreak-research",
         model_paths=model_paths, 
         method_combinations=method_combinations, 
         benchmarks=[benchmark],
@@ -799,15 +730,11 @@ def main():
     )
     
     if args.mode == 'generate':
-        pipe.generate_responses(experiment_name="jailbreak_generation", project_name="jailbreak-research")
+        pipe.generate_responses()
     elif args.mode == 'evaluate':
-        pipe.evaluate_responses(responses_path=args.responses_path, 
-                              experiment_name="jailbreak_evaluation", 
-                              project_name="jailbreak-research")
+        pipe.evaluate_responses(responses_path=args.responses_path)
     elif args.mode == 'aggregate':
-        pipe.aggregate_results(experiment_name="jailbreak_aggregation", project_name="jailbreak-research")
-    else:
-        pipe.run(experiment_name="jailbreak_comparison", project_name="jailbreak-research")
+        pipe.aggregate_results()
 
 if __name__ == "__main__":
     main()
