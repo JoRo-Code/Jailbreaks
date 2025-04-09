@@ -7,6 +7,7 @@ import uuid
 from pathlib import Path
 from tqdm import tqdm
 import torch
+import pandas as pd
 
 # Models
 from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -225,6 +226,8 @@ class JailbreakPipeline:
                     
                     for i, prompt in enumerate(tqdm(prompts, desc=f"{model_short_name}_{combo_name}")):
                         try:
+                            prompt_start = time.time()
+
                             # Generate response
                             raw_prompt = jailbreak_model.prepare_prompt(prompt)
                             response = jailbreak_model.generate(prompt)
@@ -239,7 +242,8 @@ class JailbreakPipeline:
                                 metadata={
                                     "benchmark": benchmark_name,
                                     "prompt_index": i,
-                                    "timestamp": time.time()
+                                    "timestamp": time.time(),
+                                    "gen_time": time.time() - prompt_start
                                 }
                             )
                             responses.append(gen_response)
@@ -263,16 +267,38 @@ class JailbreakPipeline:
                         "avg_generation_time": generation_time / max(len(prompts), 1)
                     })
                     
-                    # Create responses table
-                    response_table = wandb.Table(columns=["prompt", "raw_prompt", "response", "model", "method_combo"])
-                    for resp in responses:
-                        response_table.add_data(resp.prompt, resp.raw_prompt, resp.response, model_short_name, combo_name)
+                    # Save responses
+
+                    response_df = pd.DataFrame({
+                        "prompt": [resp.prompt for resp in responses],
+                        "raw_prompt": [resp.raw_prompt for resp in responses],
+                        "response": [resp.response for resp in responses],
+                        "model": [model_short_name for _ in responses],
+                        "method_combo": [combo_name for _ in responses],
+                        "gen_time": [resp.metadata["gen_time"] for resp in responses]
+                    })
                     
-                    # Log table
-                    wandb.log({f"{benchmark_key}_{model_short_name}_{combo_key}_responses": response_table})
+                    output_path = self.responses_dir / f"responses_{benchmark_key}_{model_short_name}_{combo_key}.json"
+        
+                    with open(output_path, 'w') as f:
+                        json.dump([r.to_dict() for r in responses], f, indent=2)
+                    csv_file = self.responses_dir / f"responses_{benchmark_key}_{model_short_name}_{combo_key}.csv"
+                    response_df.to_csv(csv_file, index=False)
+                    logger.info(f"Saved responses to {output_path}")
+
+                    # TODO: Log artifact
                     
-                    # Save responses to file
-                    self._save_responses(responses, benchmark_key, model_short_name, combo_key)
+                    # response_table = wandb.Table(dataframe=response_df)
+                    
+                    # response_table_artifact = wandb.Artifact(f"{benchmark_key}_{model_short_name}_{combo_key}_responses", type="dataset")
+                    # response_table_artifact.add(response_table, "response_table")
+
+                    # response_table_artifact.add_file(csv_file)
+                    # response_table_artifact.save()
+
+                    # wandb.log_artifact(response_table_artifact)
+
+                    
         
         total_generation_time = time.time() - generation_start_time
         logger.info(f"Response generation completed in {total_generation_time:.2f}s")
@@ -463,15 +489,7 @@ class JailbreakPipeline:
             return evaluator.params
         else:
             return {"name": evaluator.__str__()}
-    
-    def _save_responses(self, responses, benchmark_key, model_name, method_combo):
-        """Save generated responses to a file"""
-        output_path = self.responses_dir / f"responses_{benchmark_key}_{model_name}_{method_combo}.json"
-        
-        with open(output_path, 'w') as f:
-            json.dump([r.to_dict() for r in responses], f, indent=2)
-        
-        logger.info(f"Saved responses to {output_path}")
+
     
     def _save_evaluation(self, eval_result, benchmark_key, model_name, method_combo, evaluator_name):
         """Save evaluation results to a file"""
@@ -680,7 +698,6 @@ def main():
     parser = argparse.ArgumentParser(description='Run the jailbreak pipeline')
     parser.add_argument('--mode', choices=['all', 'generate', 'evaluate', 'aggregate'], default='all',
                         help='Which stage of the pipeline to run')
-    parser.add_argument('--responses-path', type=str, help='Path to load pre-generated responses for evaluation')
     parser.add_argument('--run-id', type=str, help='Run ID to continue an existing run')
     args = parser.parse_args()
     
@@ -714,8 +731,8 @@ def main():
     benchmark = RefusalBenchmark(prompts=get_advbench_instructions()[:3], max_new_tokens=50)
     
     evaluators = [
-        RefusalQualityEvaluator(),
-        #JailbreakSuccessEvaluator(),
+        #RefusalQualityEvaluator(),
+        JailbreakSuccessEvaluator(),
     ]
     
     pipe = JailbreakPipeline(
@@ -732,7 +749,7 @@ def main():
     if args.mode == 'generate':
         pipe.generate_responses()
     elif args.mode == 'evaluate':
-        pipe.evaluate_responses(responses_path=args.responses_path)
+        pipe.evaluate_responses()
     elif args.mode == 'aggregate':
         pipe.aggregate_results()
 
