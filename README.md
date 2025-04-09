@@ -48,6 +48,12 @@ e.g. [mistralai/Mistral-7B-Instruct-v0.1](https://huggingface.co/mistralai/Mistr
 ## Usage
 ```sh
 uv run jailbreaks/main.py
+
+uv run pipeline.py --mode generate
+
+uv run pipeline.py --mode evaluate 
+
+uv run pipeline.py --mode aggregate 
 ```
 
 ## Visualization
