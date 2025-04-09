@@ -21,4 +21,6 @@ nanogcg
 
 colorama
 wandb
+matplotlib
+seaborn
 

@@ -149,6 +149,15 @@ class JailbreakPipeline:
             for benchmark_key, models in benchmarks.items():
                 for model_name, method_results in models.items():
                     self._create_evaluation_table(model_name, benchmark_key, evaluator_name, method_results)
+        
+        summary_path = self.output_dir / f"summaries/{self.run_id}.json"
+        with open(summary_path, 'w') as f:
+            json.dump(self.results_summary, f, indent=2)
+        
+        
+        
+        
+        logger.info(f"Saved summary to {summary_path}")
 
     
 
@@ -453,11 +462,6 @@ class JailbreakPipeline:
             })    
 
         
-        summary_path = self.output_dir / f"summaries/{self.run_id}.json"
-        with open(summary_path, 'w') as f:
-            json.dump(self.results_summary, f, indent=2)
-        
-        logger.info(f"Saved summary to {summary_path}")
         wandb.finish()
     
     def _get_method_config(self, method):
