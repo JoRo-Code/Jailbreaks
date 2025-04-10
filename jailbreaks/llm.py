@@ -77,7 +77,7 @@ class LLM:
         output_tokens = None
         for method in self.methods:
             if isinstance(method, GenerationExploit):
-                output_tokens = method.generate_batch(self.model, self.tokenizer, toks, **kwargs)
+                output_tokens = method.generate_batch(self.model, self.tokenizer, toks, self._model_method_combo(), **kwargs)
                 
         if output_tokens is None:
             output_tokens = self.model.generate(inputs, **kwargs)
@@ -86,6 +86,9 @@ class LLM:
         output = [self.tokenizer.decode(o[inputs.shape[1]:], skip_special_tokens=True) for o in output_tokens]
         
         return output
+    
+    def _model_method_combo(self):
+        return self.name + "_" + "_".join([method.__class__.__name__ for method in self.methods])
         
         
         

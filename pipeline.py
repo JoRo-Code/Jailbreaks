@@ -737,7 +737,7 @@ def main():
     method_combinations = [
         #[diff_in_means],
         # [gcg],
-        [OutputAware(params=sampling_params)],
+        [OutputAware(params=sampling_params, save=True)],
         [],  # Baseline (no methods)
     ]
 
