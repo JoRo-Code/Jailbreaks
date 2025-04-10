@@ -65,7 +65,11 @@ class LLM:
                 self.model = method.apply(self.name)
                 # TODO: only apply once
                 # potentially add multi hook support
-        
+        from transformer_lens import HookedTransformer
+        if isinstance(self.model, HookedTransformer):
+            logger.debug(f"Using HookedTransformer")
+        else:
+            logger.debug(f"Using AutoModelForCausalLM")
         output_tokens = self.model.generate(inputs, **kwargs)
         output = [self.tokenizer.decode(o[inputs.shape[1]:], skip_special_tokens=True) for o in output_tokens]
         

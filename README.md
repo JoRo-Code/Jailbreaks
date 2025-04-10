@@ -33,10 +33,10 @@ uv pip install -r requirements.txt
 cd jailbreak
 ```
 
-5. Set up MLflow tracking:
+<!-- 5. Set up MLflow tracking:
 ```sh
 mlflow server --backend-store-uri sqlite:///mlflow.db --default-artifact-root ./mlruns
-```
+``` -->
 5. Secrets
 populate `.env` with your `HUGGINGFACE_HUB_TOKEN`
 ```sh
@@ -45,9 +45,17 @@ export $(cat .env | xargs)
 6. Head to Hugging Face and get access to downloading models
 e.g. [mistralai/Mistral-7B-Instruct-v0.1](https://huggingface.co/mistralai/Mistral-7B-Instruct-v0.1) or [meta-llama/Llama-3.1-8B-Instruct](https://huggingface.co/meta-llama/Llama-3.1-8B-Instruct)
 
+7. Login to weights and biases (will prompt you when you run the pipeline)
+
 ## Usage
 ```sh
-uv run jailbreaks/main.py
+uv run pipeline.py
+```
+
+or run individual steps of the pipeline
+
+```sh
+uv run pipeline.py --mode fit
 
 uv run pipeline.py --mode generate
 
@@ -56,15 +64,15 @@ uv run pipeline.py --mode evaluate
 uv run pipeline.py --mode aggregate 
 ```
 
-## Visualization
+<!-- ## Visualization -->
 
-### MLflow Tracking UI
+<!-- ### MLflow Tracking UI
 
 Results are tracked in MLflow and can be viewed through the MLflow UI:
 
 ```bash
 mlflow ui --port 5001
-```
+``` -->
 
 Navigate to http://localhost:5001 to explore experiment results. 
 
