@@ -1,10 +1,13 @@
-
 from jailbreaks.methods.base_method import GenerationExploit
 from jailbreaks.utils.refusal import is_refusal
-from typing import Dict, Any
+from typing import Dict, Any, Union
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformer_lens import HookedTransformer
 import logging
+
+from tqdm import tqdm
+import itertools
 
 logger = logging.getLogger("OutputAware")
 
@@ -19,30 +22,44 @@ class OutputAware(GenerationExploit):
         }
         self.output_scorer = lambda output: 0 if is_refusal(output) else 1
     
+    def generate_batch(self, model: Union[AutoModelForCausalLM, HookedTransformer], tokenizer: AutoTokenizer, inputs: Dict[str, torch.Tensor], **kwargs) -> str:
+        outputs = []
+        print(inputs)
+        batch_size = inputs["input_ids"].size(0)
+        for i in range(batch_size):
+            single_input = {k: v[i:i+1] for k, v in inputs.items()}
+            outputs.append(self.generate(model, tokenizer, single_input, **kwargs))
+        
+        return torch.cat(outputs, dim=0)
+    
     def generate(self, model: AutoModelForCausalLM, tokenizer: AutoTokenizer, inputs: Dict[str, torch.Tensor], **kwargs) -> str:
+        best_output_tokens = None
         best_output = ""
         best_score = -1
-        original_prompt = tokenizer.decode(inputs["input_ids"][0], skip_special_tokens=True)
         
-        logger.debug(f"{self.name}: Trying parameters with {sum(len(values) for values in self.params.values())} combinations")
+        toks = inputs["input_ids"]
         
-        for param_name, param_values in self.params.items():
-            for value in param_values:
-                generation_kwargs = kwargs.copy()
-                generation_kwargs[param_name] = value
+        param_value_pairs = [(param_name, value) 
+                            for param_name, param_values in self.params.items() 
+                            for value in param_values]
+        
+        for param_name, value in tqdm(param_value_pairs, desc="Testing parameter values"):
+            generation_kwargs = kwargs.copy()
+            generation_kwargs[param_name] = value
+            
+            logger.debug(f"Generating with {param_name}={value}")
+            
+            output_tokens = model.generate(**inputs, **generation_kwargs)
+            output_text = tokenizer.decode(output_tokens[0][toks.shape[1]:], skip_special_tokens=True)
+            
+            score = self.output_scorer(output_text)
+            logger.debug(f"Score for {param_name}={value}: {score:.4f}")
+            
+            if score > best_score:
+                best_score = score
+                best_output_tokens = output_tokens
+                best_output = output_text
+                logger.debug(f"New best output (score: {score:.4f})")
                 
-                logger.debug(f"Generating with {param_name}={value}")
-                output_tokens = model.generate(**inputs, **generation_kwargs)
-                output_text = tokenizer.decode(output_tokens[0], skip_special_tokens=True)
-                output_text = output_text[len(original_prompt):].strip()
-                
-                score = self.output_scorer(output_text)
-                logger.debug(f"Score for {param_name}={value}: {score:.4f}")
-                
-                if score > best_score:
-                    best_score = score
-                    best_output = output_text
-                    logger.debug(f"New best output (score: {score:.4f})")
-                    
-        logger.debug(f"{self.name}: Best output had score {best_score:.4f}")
-        return original_prompt + best_output
+        logger.debug(f"{self.name}: Best output had score {best_score:.4f}, output: {best_output}")
+        return best_output_tokens

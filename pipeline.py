@@ -262,9 +262,11 @@ class JailbreakPipeline:
                                 }
                             )
                             responses.append(gen_response)
-                            
+                        
+                        
                         except Exception as e:
-                            logger.error(f"Error generating response for prompt {i}: {str(e)}")
+                            import traceback
+                            logger.error(f"Error generating response for prompt {i}: {str(e)}\n{traceback.format_exc()}")
                     
                     generation_time = time.time() - generation_start
                     
@@ -711,6 +713,7 @@ def main():
     args = parser.parse_args()
     
     model_paths = ["Qwen/Qwen2-0.5B-Instruct", "Qwen/Qwen2-1.5B-Instruct"]
+    model_paths = ["Qwen/Qwen2-0.5B-Instruct"]
     
     sampling_params = {
         "top_k": [7],
@@ -732,8 +735,9 @@ def main():
     diff_in_means = DiffInMeans(harmful_prompts=get_advbench_instructions()[:N], harmless_prompts=get_harmless_instructions()[:N])
     
     method_combinations = [
-        [diff_in_means],
+        #[diff_in_means],
         # [gcg],
+        [OutputAware(params=sampling_params)],
         [],  # Baseline (no methods)
     ]
 

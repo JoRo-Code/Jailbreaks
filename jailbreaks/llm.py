@@ -56,10 +56,12 @@ class LLM:
         return self.generate_batch([prompt], **kwargs)[0]
 
     def generate_batch(self, prompts, **kwargs):
+        # prepare
         prompts = [self.prepare_prompt(prompt) for prompt in prompts]
         toks = tokenize_prompts(prompts, self.tokenizer).to(self.device)
         inputs = toks.input_ids
         
+        # manipulations
         for method in self.methods:
             if isinstance(method, ModelManipulation):
                 self.model = method.apply(self.name)
@@ -70,7 +72,17 @@ class LLM:
             logger.debug(f"Using HookedTransformer")
         else:
             logger.debug(f"Using AutoModelForCausalLM")
-        output_tokens = self.model.generate(inputs, **kwargs)
+        
+        # generation
+        output_tokens = None
+        for method in self.methods:
+            if isinstance(method, GenerationExploit):
+                output_tokens = method.generate_batch(self.model, self.tokenizer, toks, **kwargs)
+                
+        if output_tokens is None:
+            output_tokens = self.model.generate(inputs, **kwargs)
+        
+        # decode
         output = [self.tokenizer.decode(o[inputs.shape[1]:], skip_special_tokens=True) for o in output_tokens]
         
         return output
