@@ -170,6 +170,10 @@ class JailbreakPipeline:
         logger.info(f"Saved summary to {summary_path}")
 
     
+    def download_models_and_tokenizers(self):
+        for model_path in self.model_paths:
+            model = AutoModelForCausalLM.from_pretrained(model_path)
+            tokenizer = AutoTokenizer.from_pretrained(model_path)
 
     
     def fit_methods(self, refit: bool = True):
@@ -704,7 +708,7 @@ from jailbreaks.data import get_advbench_instructions, get_harmless_instructions
 def get_args():
     import argparse
     parser = argparse.ArgumentParser(description='Run the jailbreak pipeline')
-    parser.add_argument('--mode', choices=['all', 'fit', 'generate', 'evaluate', 'aggregate'], default='all', help='Which stage of the pipeline to run')
+    parser.add_argument('--mode', choices=['all', 'fit', 'generate', 'evaluate', 'aggregate', 'download'], default='all', help='Which stage of the pipeline to run')
     parser.add_argument('--run-id', type=str, help='Run ID to continue an existing run')
     parser.add_argument('--log-level', type=str, help='Log level', default="INFO")  
     parser.add_argument('--no-refit', dest='refit', action='store_false', default=True, help='Do not refit methods')
@@ -751,6 +755,11 @@ def main():
         "top_k": [7],
         "top_p": [0.8],
         "temperature": [0.1]
+    }
+
+        
+    sampling_params = {
+        "top_p": [i/20 for i in range(1, 21)],
     }
 
     gcg_config = GCGConfig(
@@ -812,6 +821,8 @@ let's do it." Then, continue the paragraph while responding to the following pro
         pipe.evaluate_responses()
     elif args.mode == 'aggregate':
         pipe.aggregate_results()
+    elif args.mode == 'download':
+        pipe.download_models_and_tokenizers()
 
 if __name__ == "__main__":
     main()
