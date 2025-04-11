@@ -13,8 +13,8 @@ import logging
 logger = logging.getLogger("RefusalBenchmark")
 
 class RefusalBenchmark(Benchmark):    
-    def __init__(self, prompts: List[str] = None, max_new_tokens: int = 100):
-        super().__init__(f"Refusal")
+    def __init__(self, prompts: List[str] = None, max_new_tokens: int = 100, name: str = "refusal"):
+        super().__init__(name)
         self.prompts = prompts
         self.max_new_tokens = max_new_tokens
     

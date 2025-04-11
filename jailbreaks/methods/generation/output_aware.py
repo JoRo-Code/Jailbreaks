@@ -1,5 +1,6 @@
 from jailbreaks.methods.base_method import GenerationExploit
 from jailbreaks.utils.refusal import is_refusal
+from jailbreaks.methods.utils import format_name
 from typing import Dict, Any, Union
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -15,9 +16,9 @@ import hashlib
 logger = logging.getLogger("OutputAware")
 
 class OutputAware(GenerationExploit):
-    def __init__(self, params: Dict[str, Any] = None, output_scorer=None, path: str = None, save: bool = False):
+    def __init__(self, params: Dict[str, Any] = None, output_scorer=None, path: str = None, save: bool = False, description: str = ""):
         super().__init__()
-        self.name = "output_aware"
+        self.name = format_name(self.__class__.__name__,description)
         self.params = params or {
             "top_k": [1, 3, 5, 7],
             "top_p": [0.2, 0.4, 0.6, 0.8],

@@ -22,6 +22,8 @@ from jailbreaks.utils.refusal import is_refusal
 from jailbreaks.utils.tokenization import format_prompts, tokenize_prompts
 from jailbreaks.utils.model_loading import load_hooked_transformer, load_tokenizer
 
+from jailbreaks.methods.utils import format_name
+
 logger = logging.getLogger("DiffInMeans")
 
 logging.basicConfig(
@@ -73,9 +75,10 @@ def kl_div(probs_a, probs_b, epsilon=1e-6):
     return torch.sum(kl_term, dim=-1).mean()
 
 class DiffInMeans(ModelManipulation):
-    def __init__(self, harmful_prompts: List[str], harmless_prompts: List[str], generation_kwargs: Dict = None, use_cache: bool = True, path: str = None):
+    def __init__(self, harmful_prompts: List[str], harmless_prompts: List[str], generation_kwargs: Dict = None, use_cache: bool = True, path: str = None, description: str = ""):
         super().__init__()
-        self.name = "diff-in-means"
+        self.name = format_name(self.__class__.__name__, description)
+        self.description = description
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self.path = path or "checkpoints/diff-in-means.pt"
         self.directions = self.load_directions(self.path) if use_cache else {}

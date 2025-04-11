@@ -1,11 +1,9 @@
 import requests
 import pandas as pd
-import io
 from datasets import load_dataset
-import os # Added import for os functions
-import json # Added import for json handling
-
-import torch
+import os
+import json
+from sklearn.model_selection import train_test_split
 
 import logging
 
@@ -24,7 +22,7 @@ HARMLESS_JSONL_PATH = os.path.join(DATASET_DIR, "harmless_instructions.jsonl")
 def ensure_dataset_dir():
     os.makedirs(DATASET_DIR, exist_ok=True)
 
-def get_advbench_instructions():
+def get_advbench_instructions(test_split=0.0):
     ensure_dataset_dir()
     if not os.path.exists(HARMFUL_CSV_PATH):
         logger.info(f"Downloading harmful instructions to {HARMFUL_CSV_PATH}...")
@@ -40,6 +38,11 @@ def get_advbench_instructions():
     dataset = pd.read_csv(HARMFUL_CSV_PATH)
     instructions = dataset['goal'].tolist()
     logger.info(f"Loaded {len(instructions)} harmful instructions.")
+    
+    if test_split > 0:
+        train, test = train_test_split(instructions, test_size=test_split, random_state=42)
+        return train, test
+    
     return instructions
 
 def get_harmless_instructions():
