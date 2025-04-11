@@ -104,7 +104,7 @@ class JailbreakPipeline:
         self.run_id = run_id or str(uuid.uuid4())[:8]  
         self.results_summary = {}
         self.project_name = project_name
-        self.output_dir = Path(output_dir)
+        self.output_dir = Path(output_dir + f"/{self.run_id}")
         self.setup_output_dir()
     
     def setup_output_dir(self):
@@ -113,8 +113,6 @@ class JailbreakPipeline:
         self.responses_dir.mkdir(exist_ok=True)
         self.evaluations_dir = self.output_dir / "evaluations"
         self.evaluations_dir.mkdir(exist_ok=True)
-        self.summaries_dir = self.output_dir / "summaries"
-        self.summaries_dir.mkdir(exist_ok=True)
     
     
     def clear_output_dir(self):
@@ -163,12 +161,9 @@ class JailbreakPipeline:
                 for model_name, method_results in models.items():
                     self._create_evaluation_table(model_name, benchmark_key, evaluator_name, method_results)
         
-        summary_path = self.output_dir / f"summaries/{self.run_id}.json"
+        summary_path = self.output_dir / "summary.json"
         with open(summary_path, 'w') as f:
             json.dump(self.results_summary, f, indent=2)
-        
-        
-        
         
         logger.info(f"Saved summary to {summary_path}")
 
