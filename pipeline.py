@@ -126,15 +126,13 @@ class JailbreakPipeline:
         self.clear_output_dir()
         self.setup_output_dir()
     
-    def run(self):
+    def run(self, refit: bool = False):
         self.reset_output_dir()
-        self.fit_methods()
+        if refit:
+            self.fit_methods(refit=refit)
         self.generate_responses()
         self.evaluate_responses()
         self.aggregate_results()
-    
-    def fit_methods(self):
-        self._fit_methods()
     
     def generate_responses(self):
         run_name = f"responses_{self.run_id}"
@@ -177,7 +175,7 @@ class JailbreakPipeline:
     
 
     
-    def _fit_methods(self):
+    def fit_methods(self, refit: bool = True):
         logger.info("Step 1: Fitting methods")
         
         for method_combo in self.method_combinations:
@@ -195,7 +193,7 @@ class JailbreakPipeline:
                         # If method needs to be fitted on a model
                         if not method_name in self.fitted_methods:
                             for model_path in self.model_paths:
-                                method.fit(model_path, refit=False)
+                                method.fit(model_path, refit=refit)
                             method.save()
                             self.fitted_methods[method_name] = method
                             logger.info(f"  Method {method_name} fitted and saved")
@@ -702,6 +700,7 @@ def get_args():
                         help='Which stage of the pipeline to run')
     parser.add_argument('--run-id', type=str, help='Run ID to continue an existing run')
     parser.add_argument('--log-level', type=str, help='Log level', default="INFO")  
+    parser.add_argument('--refit', type=bool, help='Refit methods', default=True)
     return parser.parse_args()
 
 def check_device():
@@ -794,9 +793,9 @@ let’s do it." Then, continue the paragraph while responding to the following p
     )
     
     if args.mode == 'all' or not args.mode:
-        pipe.run()
+        pipe.run(refit=args.refit)
     elif args.mode == 'fit':
-        pipe.fit_methods()
+        pipe.fit_methods(refit=args.refit)
     elif args.mode == 'generate':
         pipe.generate_responses()
     elif args.mode == 'evaluate':
