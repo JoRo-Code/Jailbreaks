@@ -253,8 +253,7 @@ class JailbreakPipeline:
 
                             # Generate response
                             raw_prompts = [jailbreak_model.prepare_prompt(prompt) for prompt in batch_prompts]
-                            batched_responses = jailbreak_model.generate_batch(batch_prompts, max_new_tokens=benchmark.max_new_tokens)
-                            
+                            batched_responses = jailbreak_model.generate_batch(batch_prompts, max_new_tokens=benchmark.max_new_tokens)                            
                             # Store generated response
                             
                             batch_gen_time = time.time() - prompt_start

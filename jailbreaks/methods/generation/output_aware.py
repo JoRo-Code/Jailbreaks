@@ -36,7 +36,23 @@ class OutputAware(GenerationExploit):
             single_input = {k: v[i:i+1] for k, v in inputs.items()}
             outputs.append(self.generate(model, tokenizer, single_input, generation_id, **kwargs))
         
-        return torch.cat(outputs, dim=0)
+        # Find the maximum length among all output tensors
+        max_length = max(output.size(1) for output in outputs)
+        
+        # Pad each tensor to the maximum length
+        padded_outputs = []
+        for output in outputs:
+            pad_length = max_length - output.size(1)
+            if pad_length > 0:
+                padding = torch.full((1, pad_length), tokenizer.pad_token_id if tokenizer.pad_token_id is not None else 0, 
+                                    dtype=output.dtype, device=output.device)
+                padded_output = torch.cat([output, padding], dim=1)
+            else:
+                padded_output = output
+            padded_outputs.append(padded_output)
+        
+        combined_outputs = torch.cat(padded_outputs, dim=0)
+        return combined_outputs
     
     def generate(self, model: AutoModelForCausalLM, tokenizer: AutoTokenizer, inputs: Dict[str, torch.Tensor], generation_id:str, **kwargs) -> str:
         best_output_tokens = None

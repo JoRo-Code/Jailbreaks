@@ -78,13 +78,11 @@ class LLM:
         for method in self.methods:
             if isinstance(method, GenerationExploit):
                 output_tokens = method.generate_batch(self.model, self.tokenizer, toks, self._model_method_combo(), **kwargs)
-                
         if output_tokens is None:
             output_tokens = self.model.generate(inputs, **kwargs)
-        
+                
         # decode
         output = [self.tokenizer.decode(o[inputs.shape[1]:], skip_special_tokens=True) for o in output_tokens]
-        
         return output
     
     def _model_method_combo(self):
