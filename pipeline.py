@@ -128,8 +128,7 @@ class JailbreakPipeline:
     
     def run(self, refit: bool = False):
         self.reset_output_dir()
-        if refit:
-            self.fit_methods(refit=refit)
+        self.fit_methods(refit=refit)
         self.generate_responses()
         self.evaluate_responses()
         self.aggregate_results()
@@ -252,7 +251,7 @@ class JailbreakPipeline:
 
                             # Generate response
                             raw_prompt = jailbreak_model.prepare_prompt(prompt)
-                            response = jailbreak_model.generate(prompt)
+                            response = jailbreak_model.generate(prompt, max_new_tokens=benchmark.max_new_tokens)
                             
                             # Store generated response
                             gen_response = GeneratedResponse(
@@ -696,11 +695,12 @@ from jailbreaks.data import get_advbench_instructions, get_harmless_instructions
 def get_args():
     import argparse
     parser = argparse.ArgumentParser(description='Run the jailbreak pipeline')
-    parser.add_argument('--mode', choices=['all', 'generate', 'evaluate', 'aggregate'], default='all',
-                        help='Which stage of the pipeline to run')
+    parser.add_argument('--mode', choices=['all', 'fit', 'generate', 'evaluate', 'aggregate'], default='all', help='Which stage of the pipeline to run')
     parser.add_argument('--run-id', type=str, help='Run ID to continue an existing run')
     parser.add_argument('--log-level', type=str, help='Log level', default="INFO")  
-    parser.add_argument('--refit', type=bool, help='Refit methods', default=True)
+    parser.add_argument('--no-refit', dest='refit', action='store_false', default=True, help='Do not refit methods')
+
+
     return parser.parse_args()
 
 def check_device():
