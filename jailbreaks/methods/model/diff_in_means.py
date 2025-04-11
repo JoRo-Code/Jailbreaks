@@ -24,13 +24,8 @@ from jailbreaks.utils.model_loading import load_hooked_transformer, load_tokeniz
 
 from jailbreaks.methods.utils import format_name
 
-logger = logging.getLogger("DiffInMeans")
+logger = logging.getLogger(__name__)
 
-logging.basicConfig(
-    level=logging.DEBUG,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    force=True
-)
 
 def hooked_transformer_path(model: HookedTransformer) -> str:
     return model.cfg.tokenizer_name

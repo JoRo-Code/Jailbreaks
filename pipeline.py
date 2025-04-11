@@ -26,11 +26,6 @@ from jailbreaks.methods.prompt.gcg import GCGConfig
 from jailbreaks.methods.model.diff_in_means import DiffInMeans
 
 import logging
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
 logger = logging.getLogger(__name__)
 
 
@@ -700,9 +695,16 @@ class JailbreakSuccessEvaluator(ResponseEvaluator):
 
 from jailbreaks.data import get_advbench_instructions, get_harmless_instructions
 
-def main():
-    logging.getLogger(__name__).setLevel(getattr(logging, "INFO"))
-    
+def get_args():
+    import argparse
+    parser = argparse.ArgumentParser(description='Run the jailbreak pipeline')
+    parser.add_argument('--mode', choices=['all', 'generate', 'evaluate', 'aggregate'], default='all',
+                        help='Which stage of the pipeline to run')
+    parser.add_argument('--run-id', type=str, help='Run ID to continue an existing run')
+    parser.add_argument('--log-level', type=str, help='Log level', default="INFO")  
+    return parser.parse_args()
+
+def check_device():
     if torch.cuda.is_available():
         device = "cuda"
         # Print CUDA information for debugging
@@ -712,21 +714,27 @@ def main():
     else:
         device = "cpu"
         logger.warning("CUDA not available, using CPU instead")
-    
-    logger.info(f"Using device: {device}")
+    return device
 
-    # Configure W&B
+def set_logging(log_level):
+    logging.getLogger().setLevel(getattr(logging, log_level))
+
+    logging.basicConfig(
+        level=getattr(logging, log_level),
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+
+def main():
+    args = get_args()
+    
+    set_logging(args.log_level)
+    
+    device = check_device()
+
     wandb.login()
     
+    # Pipeline setup
     advbench_train, advbench_test = get_advbench_instructions(test_split=0.8)
-    
-    # Parse command line arguments
-    import argparse
-    parser = argparse.ArgumentParser(description='Run the jailbreak pipeline')
-    parser.add_argument('--mode', choices=['all', 'generate', 'evaluate', 'aggregate'], default='all',
-                        help='Which stage of the pipeline to run')
-    parser.add_argument('--run-id', type=str, help='Run ID to continue an existing run')
-    args = parser.parse_args()
     
     model_paths = ["Qwen/Qwen2-0.5B-Instruct", "Qwen/Qwen2-1.5B-Instruct"]
     model_paths = ["Qwen/Qwen2-0.5B-Instruct"]

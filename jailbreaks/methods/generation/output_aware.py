@@ -13,10 +13,10 @@ import pandas as pd
 import os
 import hashlib
 
-logger = logging.getLogger("OutputAware")
+logger = logging.getLogger(__name__)
 
 class OutputAware(GenerationExploit):
-    def __init__(self, params: Dict[str, Any] = None, output_scorer=None, path: str = None, save: bool = False, description: str = ""):
+    def __init__(self, params: Dict[str, Any] = None, output_scorer=None, path: str = None, save: bool = False, description: str = "", verbose: bool = False):
         super().__init__()
         self.name = format_name(self.__class__.__name__,description)
         self.params = params or {
@@ -27,6 +27,7 @@ class OutputAware(GenerationExploit):
         self.output_scorer = lambda output: 0 if is_refusal(output) else 1
         self.path = path or self.name
         self.save = save
+        self.verbose = verbose
 
     def generate_batch(self, model: Union[AutoModelForCausalLM, HookedTransformer], tokenizer: AutoTokenizer, inputs: Dict[str, torch.Tensor], generation_id:str, **kwargs) -> str:
         outputs = []
@@ -49,7 +50,9 @@ class OutputAware(GenerationExploit):
                             for param_name, param_values in self.params.items() 
                             for value in param_values]
         generations = []
-        for param_name, value in tqdm(param_value_pairs, desc="Testing parameter values"):
+        param_iterator = tqdm(param_value_pairs, desc="Testing parameter values") if self.verbose else param_value_pairs
+
+        for param_name, value in param_iterator:
             generation_kwargs = kwargs.copy()
             generation_kwargs[param_name] = value
             

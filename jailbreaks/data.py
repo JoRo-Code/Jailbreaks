@@ -8,11 +8,6 @@ from sklearn.model_selection import train_test_split
 import logging
 
 logger = logging.getLogger(__name__)
-logging.basicConfig(
-    level=logging.DEBUG,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    force=True
-)
 
 # Define the directory to store datasets
 DATASET_DIR = "data"

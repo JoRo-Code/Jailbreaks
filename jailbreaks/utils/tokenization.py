@@ -2,7 +2,7 @@ from typing import List
 import logging
 from transformers import AutoTokenizer
 
-logger = logging.getLogger("prompt_formatting")
+logger = logging.getLogger(__name__)
 
 QWEN_CHAT_TEMPLATE = """<|im_start|>user
 {instruction}<|im_end|>
@@ -21,13 +21,13 @@ def format_prompts(prompts: List[str], tokenizer: AutoTokenizer) -> List[str]:
     model_path = tokenizer.name_or_path.lower()
     
     if "qwen" in model_path:
-        logger.warning(f"Using hardcoded Qwen chat template for {tokenizer.name_or_path}")
+        logger.debug(f"Using hardcoded Qwen chat template for {tokenizer.name_or_path}")
         return [QWEN_CHAT_TEMPLATE.format(instruction=prompt) for prompt in prompts]
     elif "llama" in model_path:
-        logger.warning(f"Using hardcoded Llama chat template for {tokenizer.name_or_path}")
+        logger.debug(f"Using hardcoded Llama chat template for {tokenizer.name_or_path}")
         return [LLAMA3_CHAT_TEMPLATE.format(instruction=prompt) for prompt in prompts]
     elif "mistral" in model_path:
-        logger.warning(f"Using hardcoded Mistral chat template for {tokenizer.name_or_path}")
+        logger.debug(f"Using hardcoded Mistral chat template for {tokenizer.name_or_path}")
         return [MISTRAL_CHAT_TEMPLATE.format(instruction=prompt) for prompt in prompts]
     else:
         # If no method and not a recognized model, raise an error
@@ -38,10 +38,10 @@ def format_prompts(prompts: List[str], tokenizer: AutoTokenizer) -> List[str]:
 
 def tokenize_prompts(prompts: List[str], tokenizer: AutoTokenizer) -> List[str]:
     if tokenizer.pad_token is None:
-        logger.warning("Tokenizer does not have a pad token. Setting to eos_token.")
+        logger.debug("Tokenizer does not have a pad token. Setting to eos_token.")
         tokenizer.pad_token = tokenizer.eos_token # TODO: add custom?
 
     if tokenizer.padding_side != 'left':
-            logger.warning(f"Tokenizer padding side is '{tokenizer.padding_side}'. Forcing to 'left'.")
-            tokenizer.padding_side = 'left'
+        logger.debug(f"Tokenizer padding side is '{tokenizer.padding_side}'. Forcing to 'left'.")
+        tokenizer.padding_side = 'left'
     return tokenizer(prompts, padding=True,truncation=False, return_tensors="pt")

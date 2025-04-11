@@ -6,7 +6,7 @@ from typing import List, Dict
 from jailbreaks.methods.base_method import JailBreakMethod, PromptInjection, GenerationExploit, ModelManipulation
 
 import logging
-logger = logging.getLogger("LLM")
+logger = logging.getLogger(__name__)
 
 from jailbreaks.utils.model_loading import load_model, load_tokenizer
 
