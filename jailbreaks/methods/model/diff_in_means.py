@@ -436,7 +436,7 @@ class DiffInMeans(ModelManipulation):
         del best_direction
         del candidate_directions
         del baseline_probs_harmless
-        del baseline_harmful_logits_last
+        # del baseline_harmful_logits_last, TODO: find if something else is not deleted
         gc.collect()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
