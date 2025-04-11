@@ -91,13 +91,15 @@ class JailbreakPipeline:
         evaluators: List = None,
         device: str = None,
         output_dir: str = "results",
-        run_id: Optional[str] = None
+        run_id: Optional[str] = None,
+        batch_size: int = 8
     ):
         self.model_paths = model_paths or []
         self.method_combinations = method_combinations or [[]]
         self.benchmarks = benchmarks or []
         self.evaluators = evaluators or []
         self.device = device or "cuda" if torch.cuda.is_available() else "cpu"
+        self.batch_size = batch_size
         
         self.fitted_methods = {}  
         self.generated_responses = {}  
@@ -240,35 +242,44 @@ class JailbreakPipeline:
                     
                     # Get prompts from benchmark
                     prompts = benchmark.get_prompts()
+
+                    batch_size = self.batch_size
+                    for batch_idx, batch_start in enumerate(tqdm(range(0, len(prompts), batch_size), desc=f"{model_short_name}_{combo_name}")):
+                        batch_end = min(batch_start + batch_size, len(prompts))
+                        batch_prompts = prompts[batch_start:batch_end]
                     
-                    for i, prompt in enumerate(tqdm(prompts, desc=f"{model_short_name}_{combo_name}")):
                         try:
                             prompt_start = time.time()
 
                             # Generate response
-                            raw_prompt = jailbreak_model.prepare_prompt(prompt)
-                            response = jailbreak_model.generate(prompt, max_new_tokens=benchmark.max_new_tokens)
+                            raw_prompts = [jailbreak_model.prepare_prompt(prompt) for prompt in batch_prompts]
+                            batched_responses = jailbreak_model.generate_batch(batch_prompts, max_new_tokens=benchmark.max_new_tokens)
                             
                             # Store generated response
-                            gen_response = GeneratedResponse(
-                                prompt=prompt,
-                                raw_prompt=raw_prompt,
-                                response=response,
+                            
+                            batch_gen_time = time.time() - prompt_start
+                            gen_responses = [GeneratedResponse(
+                                prompt=batch_prompts[i],
+                                raw_prompt=raw_prompts[i],
+                                response=batched_responses[i],
                                 model_id=model_path,
                                 method_combo=combo_name,
                                 metadata={
                                     "benchmark": benchmark_name,
                                     "prompt_index": i,
                                     "timestamp": time.time(),
-                                    "gen_time": time.time() - prompt_start
+                                    "gen_time": batch_gen_time/batch_size,
+                                    "batch_idx": batch_idx,
+                                    "batch_size": batch_size
                                 }
-                            )
-                            responses.append(gen_response)
+                            ) for i, _ in enumerate(batched_responses)]
+                            
+                            responses.extend(gen_responses)
                         
                         
                         except Exception as e:
                             import traceback
-                            logger.error(f"Error generating response for prompt {i}: {str(e)}\n{traceback.format_exc()}")
+                            logger.error(f"Error generating response for batch {batch_idx}: {str(e)}\n{traceback.format_exc()}")
                     
                     generation_time = time.time() - generation_start
                     
@@ -788,7 +799,8 @@ let's do it." Then, continue the paragraph while responding to the following pro
         evaluators=evaluators,
         device=device,
         output_dir=output_dir,
-        run_id=args.run_id
+        run_id=args.run_id,
+        batch_size=8
     )
     
     if args.mode == 'all' or not args.mode:
