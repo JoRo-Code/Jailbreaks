@@ -20,6 +20,11 @@ class LLM:
         self.tokenizer = load_tokenizer(model_path)
         self.methods = methods
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        
+        for method in self.methods:
+            if isinstance(method, ModelManipulation):
+                self.model = method.apply(self.name)
+                # potentially add multi hook support
     
     def to(self, device):
         if self.device != device:
@@ -68,17 +73,12 @@ class LLM:
         toks = tokenize_prompts(prompts, self.tokenizer).to(self.device)
         inputs = toks.input_ids
         
-        # manipulations
-        for method in self.methods:
-            if isinstance(method, ModelManipulation):
-                self.model = method.apply(self.name)
-                # TODO: only apply once
-                # potentially add multi hook support
         from transformer_lens import HookedTransformer
         if isinstance(self.model, HookedTransformer):
             logger.debug(f"Using HookedTransformer")
         else:
             logger.debug(f"Using AutoModelForCausalLM")
+        self.model.eval()
         
         # generation
         output_tokens = None
@@ -86,7 +86,7 @@ class LLM:
             if isinstance(method, GenerationExploit):
                 output_tokens = method.generate_batch(self.model, self.tokenizer, toks, self._model_method_combo(), **kwargs)
         if output_tokens is None:
-            output_tokens = self.model.generate(inputs, **kwargs)
+                output_tokens = self.model.generate(inputs, **kwargs)
                 
         # decode
         output = [self.tokenizer.decode(o[inputs.shape[1]:], skip_special_tokens=True) for o in output_tokens]

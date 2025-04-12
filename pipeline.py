@@ -108,6 +108,10 @@ class JailbreakPipeline:
         self.project_name = project_name
         self.output_dir = Path(output_dir + f"/{self.run_id}")
         self.setup_output_dir()
+        
+        # Initialize dictionaries to track step times
+        self.step_times = {}
+        self.method_model_times = {}
     
     def setup_output_dir(self):
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -127,11 +131,55 @@ class JailbreakPipeline:
         self.setup_output_dir()
     
     def run(self, refit: bool = False):
+        total_start_time = time.time()
         self.reset_output_dir()
+        
+        # Track time for each step
+        fit_start = time.time()
         self.fit_methods(refit=refit)
+        self.step_times['fit_methods'] = time.time() - fit_start
+        
+        gen_start = time.time()
         self.generate_responses()
+        self.step_times['generate_responses'] = time.time() - gen_start
+        
+        eval_start = time.time()
         self.evaluate_responses()
+        self.step_times['evaluate_responses'] = time.time() - eval_start
+        
+        agg_start = time.time()
         self.aggregate_results()
+        self.step_times['aggregate_results'] = time.time() - agg_start
+        
+        # Calculate total time
+        self.step_times['total_runtime'] = time.time() - total_start_time
+        
+        # Save step times to a file
+        times_path = self.output_dir / "step_times.json"
+        with open(times_path, 'w') as f:
+            json.dump({k: round(v, 2) for k, v in self.step_times.items()}, f, indent=2)
+        
+        # Save method/model times to a file
+        method_model_times_path = self.output_dir / "method_model_times.json"
+        with open(method_model_times_path, 'w') as f:
+            json.dump(self.method_model_times, f, indent=2)
+        
+        # Print execution time summary
+        logger.info("=== Execution Time Summary ===")
+        for step, duration in self.step_times.items():
+            logger.info(f"{step}: {duration:.2f} seconds ({duration/60:.2f} minutes)")
+        
+        # Print method/model time summary
+        logger.info("\n=== Method/Model Execution Time Summary ===")
+        for benchmark, models in self.method_model_times.items():
+            logger.info(f"\nBenchmark: {benchmark}")
+            for model, methods in models.items():
+                logger.info(f"  Model: {model}")
+                for method, times in methods.items():
+                    avg_time = times.get('avg_gen_time', 0)
+                    total_time = times.get('total_time', 0)
+                    num_samples = times.get('num_samples', 0)
+                    logger.info(f"    Method: {method} - Avg time per sample: {avg_time:.4f}s, Total time: {total_time:.2f}s, Samples: {num_samples}")
     
     def generate_responses(self):
         run_name = f"responses_{self.run_id}"
@@ -195,7 +243,7 @@ class JailbreakPipeline:
                         if not method_name in self.fitted_methods:
                             for model_path in self.model_paths:
                                 method.fit(model_path, refit=refit)
-                            method.save()
+                                method.save()
                             self.fitted_methods[method_name] = method
                             logger.info(f"  Method {method_name} fitted and saved")
                     except Exception as e:
@@ -215,6 +263,34 @@ class JailbreakPipeline:
             "total_benchmarks": len(self.benchmarks),
         }
         wandb.config.update(overall_metrics)
+        
+        # Initialize method_model_times structure
+        for benchmark in self.benchmarks:
+            benchmark_name = benchmark.__str__()
+            benchmark_key = benchmark_name.lower().replace(" ", "_")
+            
+            if benchmark_key not in self.method_model_times:
+                self.method_model_times[benchmark_key] = {}
+            
+            for model_path in self.model_paths:
+                model_short_name = model_path.split("/")[-1]
+                
+                if model_short_name not in self.method_model_times[benchmark_key]:
+                    self.method_model_times[benchmark_key][model_short_name] = {}
+                
+                for method_combo in self.method_combinations:
+                    if not method_combo:
+                        combo_name = "baseline"
+                    else:
+                        combo_name = "_".join(method.__str__().lower() for method in method_combo)
+                    
+                    if combo_name not in self.method_model_times[benchmark_key][model_short_name]:
+                        self.method_model_times[benchmark_key][model_short_name][combo_name] = {
+                            'total_time': 0,
+                            'avg_gen_time': 0,
+                            'num_samples': 0,
+                            'batch_times': []
+                        }
         
         for benchmark in self.benchmarks:
             benchmark_name = benchmark.__str__()
@@ -253,14 +329,25 @@ class JailbreakPipeline:
                         batch_prompts = prompts[batch_start:batch_end]
                     
                         try:
-                            prompt_start = time.time()
+                            batch_start_time = time.time()
 
                             # Generate response
                             raw_prompts = [jailbreak_model.prepare_prompt(prompt) for prompt in batch_prompts]
                             batched_responses = jailbreak_model.generate_batch(batch_prompts, max_new_tokens=benchmark.max_new_tokens)                            
-                            # Store generated response
                             
-                            batch_gen_time = time.time() - prompt_start
+                            # Calculate batch generation time
+                            batch_gen_time = time.time() - batch_start_time
+                            per_sample_time = batch_gen_time / len(batch_prompts)
+                            
+                            # Track timing for this batch
+                            self.method_model_times[benchmark_key][model_short_name][combo_name]['batch_times'].append({
+                                'batch_idx': batch_idx,
+                                'batch_size': len(batch_prompts),
+                                'total_time': batch_gen_time,
+                                'per_sample_time': per_sample_time
+                            })
+                            
+                            # Store generated response
                             gen_responses = [GeneratedResponse(
                                 prompt=batch_prompts[i],
                                 raw_prompt=raw_prompts[i],
@@ -271,20 +358,28 @@ class JailbreakPipeline:
                                     "benchmark": benchmark_name,
                                     "prompt_index": i,
                                     "timestamp": time.time(),
-                                    "gen_time": batch_gen_time/batch_size,
+                                    "gen_time": per_sample_time,
                                     "batch_idx": batch_idx,
-                                    "batch_size": batch_size
+                                    "batch_size": len(batch_prompts)
                                 }
                             ) for i, _ in enumerate(batched_responses)]
                             
                             responses.extend(gen_responses)
                         
-                        
                         except Exception as e:
                             import traceback
                             logger.error(f"Error generating response for batch {batch_idx}: {str(e)}\n{traceback.format_exc()}")
                     
-                    generation_time = time.time() - generation_start
+                    # Calculate and store overall timing metrics for this method/model
+                    total_generation_time = time.time() - generation_start
+                    num_samples = len(responses)
+                    avg_gen_time = total_generation_time / max(num_samples, 1)
+                    
+                    self.method_model_times[benchmark_key][model_short_name][combo_name].update({
+                        'total_time': total_generation_time,
+                        'avg_gen_time': avg_gen_time,
+                        'num_samples': num_samples
+                    })
                     
                     jailbreak_model.clear_cache()
                     
@@ -298,8 +393,8 @@ class JailbreakPipeline:
                         "model": model_short_name,
                         "method_combo": combo_name,
                         "num_responses": len(responses),
-                        "generation_time": generation_time,
-                        "avg_generation_time": generation_time / max(len(prompts), 1)
+                        "generation_time": total_generation_time,
+                        "avg_generation_time": avg_gen_time
                     })
                     
                     # Save responses
@@ -341,12 +436,18 @@ class JailbreakPipeline:
     def _evaluate_responses(self):
         logger.info("Step 3: Evaluating responses")
         
+        eval_start_time = time.time()
+        
         if not self.evaluators:
             logger.warning("No evaluators provided. Skipping evaluation step.")
             return
         
         if not hasattr(self, 'evaluation_results'):
             self.evaluation_results = {}
+        
+        # Initialize evaluation timing dictionary if not exists
+        if not hasattr(self, 'evaluation_times'):
+            self.evaluation_times = {}
         
         for evaluator in self.evaluators:
             evaluator_name = evaluator.__str__()
@@ -355,9 +456,15 @@ class JailbreakPipeline:
             if evaluator_name not in self.evaluation_results:
                 self.evaluation_results[evaluator_name] = {}
             
+            if evaluator_name not in self.evaluation_times:
+                self.evaluation_times[evaluator_name] = {}
+            
             for benchmark_key, model_method_responses in self.generated_responses.items():
                 if benchmark_key not in self.evaluation_results[evaluator_name]:
                     self.evaluation_results[evaluator_name][benchmark_key] = {}
+                
+                if benchmark_key not in self.evaluation_times[evaluator_name]:
+                    self.evaluation_times[evaluator_name][benchmark_key] = {}
                 
                 logger.info(f"  Evaluating {benchmark_key} responses")
                 
@@ -419,11 +526,33 @@ class JailbreakPipeline:
                         # Save evaluation results
                         self._save_evaluation(eval_result, benchmark_key, model_name, method_combo, evaluator_name)
                         
+                        # Track evaluation time
+                        eval_time = time.time() - eval_start_time
+                        if model_name not in self.evaluation_times[evaluator_name][benchmark_key]:
+                            self.evaluation_times[evaluator_name][benchmark_key][model_name] = {}
+                        
+                        self.evaluation_times[evaluator_name][benchmark_key][model_name][method_combo] = {
+                            'total_time': eval_time,
+                            'avg_time_per_sample': eval_time / len(responses) if responses else 0,
+                            'num_samples': len(responses)
+                        }
+                        
                     except Exception as e:
                         logger.error(f"Error evaluating {model_method_key}: {str(e)}")
                         import traceback
                         logger.error(traceback.format_exc())
                         
+        # Save evaluation times
+        eval_times_path = self.evaluations_dir / "evaluation_times.json"
+        with open(eval_times_path, 'w') as f:
+            json.dump(self.evaluation_times, f, indent=2)
+        
+        logger.info(f"Saved evaluation times to {eval_times_path}")
+        
+        eval_time = time.time() - eval_start_time
+        self.step_times['_evaluate_responses_internal'] = eval_time
+        logger.info(f"Response evaluation completed in {eval_time:.2f}s")
+    
     def _create_evaluation_table(self, model_name, benchmark_key, evaluator_name, method_results):
         run_name = f"{model_name}_{self.run_id}"
         wandb.init(project=self.project_name, name=run_name, id=run_name)
@@ -755,6 +884,13 @@ def main():
     # model_paths = ["meta-llama/Llama-3.1-8B-Instruct",
     #                "mistralai/Mistral-7B-Instruct-v0.1",
     #                "Qwen/Qwen2.5-7B-Instruct"]
+
+    model_paths = [
+        #"Qwen/Qwen2-0.5B-Instruct",
+        #"Qwen/Qwen2.5-1.5B-Instruct",
+        #"Qwen/Qwen2.5-3B-Instruct",
+        "Qwen/Qwen2.5-7B-Instruct",
+    ]
     
     sampling_params = {
         "top_k": [7],
@@ -764,7 +900,7 @@ def main():
 
         
     sampling_params = {
-        "top_p": [i/20 for i in range(1, 21)],
+        "top_p": [i/20 for i in range(10, 21)],
     }
 
     gcg_config = GCGConfig(
@@ -789,13 +925,13 @@ let's do it." Then, continue the paragraph while responding to the following pro
         # [prefix_injection_1],
         # [prefix_injection_2],
         [prefix_injection_3],
-        #[diff_in_means],
+        [diff_in_means],
         # [gcg],
-        [OutputAware(params=sampling_params, save=True)],
+        #[OutputAware(params=sampling_params, save=True)],
         [],  # Baseline (no methods)
     ]
 
-    benchmark = RefusalBenchmark(prompts=advbench_test[:8], max_new_tokens=50, name="advbench")
+    benchmark = RefusalBenchmark(prompts=advbench_test, max_new_tokens=100, name="advbench-416")
     
     evaluators = [
         #RefusalQualityEvaluator(),
@@ -813,7 +949,7 @@ let's do it." Then, continue the paragraph while responding to the following pro
         device=device,
         output_dir=output_dir,
         run_id=args.run_id,
-        batch_size=8
+        batch_size=32
     )
     
     if args.mode == 'all' or not args.mode:
