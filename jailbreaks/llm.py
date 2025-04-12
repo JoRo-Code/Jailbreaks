@@ -11,6 +11,7 @@ logger = logging.getLogger(__name__)
 from jailbreaks.utils.model_loading import load_model, load_tokenizer
 
 from jailbreaks.utils.tokenization import format_prompts, tokenize_prompts
+import gc
 
 class LLM:
     def __init__(self, model_path: str, methods: List[JailBreakMethod]):
@@ -26,6 +27,12 @@ class LLM:
             if not hasattr(self.model, "device_map") or self.model.device_map is None:
                 self.model = self.model.to(device)
         return self
+    
+    def clear_cache(self):
+        del self.model
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        gc.collect()
     
     def _process_prompt(self, prompt: str) -> Dict[str, torch.Tensor]:
         return self._process_prompts([prompt])[0]
@@ -83,6 +90,7 @@ class LLM:
                 
         # decode
         output = [self.tokenizer.decode(o[inputs.shape[1]:], skip_special_tokens=True) for o in output_tokens]
+        
         return output
     
     def _model_method_combo(self):

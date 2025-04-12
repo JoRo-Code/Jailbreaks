@@ -287,6 +287,8 @@ class JailbreakPipeline:
                     
                     generation_time = time.time() - generation_start
                     
+                    jailbreak_model.clear_cache()
+                    
                     # Store responses
                     key = f"{model_short_name}_{combo_key}"
                     self.generated_responses[benchmark_key][key] = responses
