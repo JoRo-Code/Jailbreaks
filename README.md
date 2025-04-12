@@ -48,6 +48,16 @@ e.g. [mistralai/Mistral-7B-Instruct-v0.1](https://huggingface.co/mistralai/Mistr
 7. Login to weights and biases (will prompt you when you run the pipeline)
 
 ## Usage
+Download models
+```sh
+uv run pipeline.py --mode download 
+```
+Run pipeline:
+- fit methods
+- generate responses
+- evaluate responses
+- aggregate results
+
 ```sh
 uv run pipeline.py
 ```

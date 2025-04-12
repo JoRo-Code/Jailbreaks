@@ -171,9 +171,10 @@ class JailbreakPipeline:
 
     
     def download_models_and_tokenizers(self):
+        from jailbreaks.utils.model_loading import load_model, load_tokenizer
         for model_path in self.model_paths:
-            model = AutoModelForCausalLM.from_pretrained(model_path)
-            tokenizer = AutoTokenizer.from_pretrained(model_path)
+            model = load_model(model_path)
+            tokenizer = load_tokenizer(model_path)
 
     
     def fit_methods(self, refit: bool = True):
@@ -748,8 +749,11 @@ def main():
     # Pipeline setup
     advbench_train, advbench_test = get_advbench_instructions(test_split=0.8)
     
-    model_paths = ["Qwen/Qwen2-0.5B-Instruct", "Qwen/Qwen2-1.5B-Instruct"]
+    #model_paths = ["Qwen/Qwen2-0.5B-Instruct", "Qwen/Qwen2-1.5B-Instruct"]
     model_paths = ["Qwen/Qwen2-0.5B-Instruct"]
+    model_paths = ["meta-llama/Llama-3.1-8B-Instruct",
+                   "mistralai/Mistral-7B-Instruct-v0.1",
+                   "Qwen/Qwen2.5-7B-Instruct"]
     
     sampling_params = {
         "top_k": [7],
