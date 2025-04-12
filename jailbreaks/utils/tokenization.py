@@ -37,11 +37,4 @@ def format_prompts(prompts: List[str], tokenizer: AutoTokenizer) -> List[str]:
         )
 
 def tokenize_prompts(prompts: List[str], tokenizer: AutoTokenizer) -> List[str]:
-    if tokenizer.pad_token is None:
-        logger.debug("Tokenizer does not have a pad token. Setting to eos_token.")
-        tokenizer.pad_token = tokenizer.eos_token # TODO: add custom?
-
-    if tokenizer.padding_side != 'left':
-        logger.debug(f"Tokenizer padding side is '{tokenizer.padding_side}'. Forcing to 'left'.")
-        tokenizer.padding_side = 'left'
     return tokenizer(prompts, padding=True,truncation=False, return_tensors="pt")

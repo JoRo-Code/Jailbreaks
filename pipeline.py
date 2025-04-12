@@ -173,10 +173,9 @@ class JailbreakPipeline:
     def download_models_and_tokenizers(self):
         from jailbreaks.utils.model_loading import load_model, load_tokenizer
         for model_path in self.model_paths:
-            model = load_model(model_path)
-            tokenizer = load_tokenizer(model_path)
+            load_model(model_path, device="cpu") # we don't need to load the model to the GPU
+            load_tokenizer(model_path, device="cpu")
 
-    
     def fit_methods(self, refit: bool = True):
         logger.info("Step 1: Fitting methods")
         
@@ -753,9 +752,9 @@ def main():
     
     #model_paths = ["Qwen/Qwen2-0.5B-Instruct", "Qwen/Qwen2-1.5B-Instruct"]
     model_paths = ["Qwen/Qwen2-0.5B-Instruct"]
-    model_paths = ["meta-llama/Llama-3.1-8B-Instruct",
-                   "mistralai/Mistral-7B-Instruct-v0.1",
-                   "Qwen/Qwen2.5-7B-Instruct"]
+    # model_paths = ["meta-llama/Llama-3.1-8B-Instruct",
+    #                "mistralai/Mistral-7B-Instruct-v0.1",
+    #                "Qwen/Qwen2.5-7B-Instruct"]
     
     sampling_params = {
         "top_k": [7],
@@ -796,7 +795,7 @@ let's do it." Then, continue the paragraph while responding to the following pro
         [],  # Baseline (no methods)
     ]
 
-    benchmark = RefusalBenchmark(prompts=advbench_test[:5], max_new_tokens=50, name="advbench")
+    benchmark = RefusalBenchmark(prompts=advbench_test[:8], max_new_tokens=50, name="advbench")
     
     evaluators = [
         #RefusalQualityEvaluator(),

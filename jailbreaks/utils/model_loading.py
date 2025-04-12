@@ -34,9 +34,17 @@ def load_model(model_path, device=None, **kwargs):
     return model
 
 def load_tokenizer(model_path, **kwargs):
-    return AutoTokenizer.from_pretrained(
+    tokenizer = AutoTokenizer.from_pretrained(
         model_path, 
         device_map="auto", 
         token=get_auth_token(),
         **kwargs
     )
+
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token # TODO: add custom?
+
+    if tokenizer.padding_side != 'left':
+        tokenizer.padding_side = 'left'
+
+    return tokenizer
