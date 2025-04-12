@@ -128,6 +128,7 @@ class OutputAware(GenerationExploit):
         # Iterate over each parameter-value combination.
         for param_name, value in iterator:
             generation_kwargs = kwargs.copy()
+            generation_kwargs["do_sample"] = True
             generation_kwargs[param_name] = value
             logger.debug(f"Generating for batch with {param_name}={value}")
             
