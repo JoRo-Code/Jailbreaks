@@ -136,6 +136,8 @@ class DiffInMeans(ModelManipulation):
         logging and cache cleanups
         """
         
+        start_time_include_loading = time.time()
+        
         harmful_prompts = self.harmful_prompts
         harmless_prompts = self.harmless_prompts
         generation_kwargs = self.generation_kwargs
@@ -150,6 +152,8 @@ class DiffInMeans(ModelManipulation):
         logger.info(f"Loading model {model_path}")
         model = load_hooked_transformer(model_path)
         tokenizer = load_tokenizer(model_path)
+
+        fitting_start_time = time.time()
 
         formatted_harmful_prompts = format_prompts(harmful_prompts, tokenizer)
         formatted_harmless_prompts = format_prompts(harmless_prompts, tokenizer)
@@ -341,7 +345,9 @@ class DiffInMeans(ModelManipulation):
                 'harmless_refusal_rate': current_harmless_refusal_rate.item() if not error_msg else 1.0,
                 'kl_divergence': kl_divergence.item() if not error_msg else float('inf'),
                 'overall_score': current_score_float,
-                'error': error_msg
+                'error': error_msg,
+                'fitting_time': time.time() - fitting_start_time,
+                'total_time': time.time() - start_time_include_loading
             })
 
             # log prompts and scores
