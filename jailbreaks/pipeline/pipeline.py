@@ -150,7 +150,7 @@ class JailbreakPipeline:
             return {"name": evaluator.__str__()}
 
     
-    def _save_evaluation(self, eval_result, benchmark_key, model_name, method_combo, evaluator_name):
+    def save_evaluation(self, eval_result, benchmark_key, model_name, method_combo, evaluator_name):
         """Save evaluation results to a file"""
         output_path = self.evaluations_dir / f"eval_{benchmark_key}_{model_name}_{method_combo}_{evaluator_name}.json"
         
@@ -206,6 +206,13 @@ class JailbreakPipeline:
         
         except Exception as e:
             logger.error(f"Error loading response file {file_path}: {str(e)}")
+    
+    def clear_evaluation_results(self):
+        if self.evaluations_dir.exists():
+            import shutil
+            shutil.rmtree(self.evaluations_dir)
+        self.evaluations_dir.mkdir(exist_ok=True)
+        logger.info(f"Cleared evaluation results directory: {self.evaluations_dir}")
 
     def load_evaluation_results(self):
         """Load evaluation results from saved files"""
