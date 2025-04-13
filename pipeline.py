@@ -132,7 +132,7 @@ class JailbreakPipeline:
     
     def run(self, refit: bool = False):
         total_start_time = time.time()
-        self.reset_output_dir()
+        self.setup_output_dir()
         
         # Track time for each step
         fit_start = time.time()
@@ -889,7 +889,10 @@ def main():
         #"Qwen/Qwen2-0.5B-Instruct",
         #"Qwen/Qwen2.5-1.5B-Instruct",
         #"Qwen/Qwen2.5-3B-Instruct",
-        "Qwen/Qwen2.5-7B-Instruct",
+        #"Qwen/Qwen2.5-7B-Instruct",
+        "Qwen/Qwen2.5-14B-Instruct",
+        "Qwen/Qwen2.5-32B-Instruct",
+        
     ]
     
     sampling_params = {
