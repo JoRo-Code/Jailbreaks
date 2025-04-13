@@ -168,6 +168,9 @@ class GCG(PromptInjection):
         logger.info(f"Time taken to fit {model_name}: {end_time - start_time} seconds")
         self.results[model_name] = result
         self.save()
+
+        del model
+        del tokenizer
         
         return result
 
