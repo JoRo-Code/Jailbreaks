@@ -72,6 +72,7 @@ class LLM:
         prompts = [self.prepare_prompt(prompt) for prompt in prompts]
         toks = tokenize_prompts(prompts, self.tokenizer).to(self.device)
         inputs = toks.input_ids
+        attention_mask = toks.attention_mask
         
         from transformer_lens import HookedTransformer
         if isinstance(self.model, HookedTransformer):
@@ -86,6 +87,9 @@ class LLM:
             if isinstance(method, GenerationExploit):
                 output_tokens = method.generate_batch(self.model, self.tokenizer, toks, self._model_method_combo(), **kwargs)
         if output_tokens is None:
+            if isinstance(self.model, AutoModelForCausalLM):
+                output_tokens = self.model.generate(inputs, attention_mask=attention_mask, **kwargs)
+            else:
                 output_tokens = self.model.generate(inputs, **kwargs)
                 
         # decode
