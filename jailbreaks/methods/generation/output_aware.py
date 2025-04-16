@@ -1,17 +1,20 @@
+import os
+import hashlib
+from typing import Dict, Any, Union
+import logging
+
+import torch
+from tqdm import tqdm
+import pandas as pd
+from transformer_lens import HookedTransformer
+from transformers import (
+    AutoModelForCausalLM, 
+    AutoTokenizer
+)
+
 from jailbreaks.methods.base_method import GenerationExploit
 from jailbreaks.utils.refusal import is_refusal
 from jailbreaks.methods.utils import format_name
-from typing import Dict, Any, Union
-import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer
-from transformer_lens import HookedTransformer
-import logging
-
-from tqdm import tqdm
-import itertools
-import pandas as pd
-import os
-import hashlib
 
 logger = logging.getLogger(__name__)
 

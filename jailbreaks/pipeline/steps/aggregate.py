@@ -1,11 +1,10 @@
+import json
+import logging
+import wandb
 
 from jailbreaks.pipeline.pipeline import JailbreakPipeline
 
-from logging import getLogger
-import json
-import wandb
-
-logger = getLogger(__name__)
+logger = logging.getLogger(__name__)
 
 def aggregate(pipeline: JailbreakPipeline):
     logger.info("Step 4: Aggregating results")

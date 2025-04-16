@@ -1,15 +1,14 @@
+import time
+import logging
 from typing import List
+
+import mlflow
+from tqdm import tqdm
 
 from jailbreaks.benchmarks.base import Benchmark
 from jailbreaks.llm import LLM
-
 from jailbreaks.utils.refusal import is_refusal
 
-import mlflow
-import time
-from tqdm import tqdm
-
-import logging
 logger = logging.getLogger("RefusalBenchmark")
 
 class RefusalBenchmark(Benchmark):    

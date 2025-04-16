@@ -1,15 +1,14 @@
+import os 
+import json
+import logging
+
 import requests
 import pandas as pd
 from datasets import load_dataset
-import os
-import json
 from sklearn.model_selection import train_test_split
-
-import logging
 
 logger = logging.getLogger(__name__)
 
-# Define the directory to store datasets
 DATASET_DIR = "data"
 HARMFUL_CSV_PATH = os.path.join(DATASET_DIR, "harmful_behaviors.csv")
 HARMLESS_JSONL_PATH = os.path.join(DATASET_DIR, "harmless_instructions.jsonl")

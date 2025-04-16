@@ -1,22 +1,18 @@
-from pydantic import BaseModel
-
-from jailbreaks.benchmarks.base import Benchmark
-from jailbreaks.llm import LLM
-
-
 import os
 import time
-import mlflow
+import logging
+from pydantic import BaseModel
 
+import mlflow
 from deepeval.models.base_model import DeepEvalBaseLLM
 from deepeval.benchmarks.schema import MultipleChoiceSchema
 from deepeval.benchmarks import MMLU, HellaSwag
 from deepeval.benchmarks.tasks import MMLUTask, HellaSwagTask
-
 from transformers import AutoTokenizer
 
+from jailbreaks.benchmarks.base import Benchmark
+from jailbreaks.llm import LLM
 
-import logging
 logger = logging.getLogger("UtilityBenchmark")
 
 class UtilityBenchmark(Benchmark):

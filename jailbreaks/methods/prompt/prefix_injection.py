@@ -1,5 +1,6 @@
 from jailbreaks.methods.base_method import PromptInjection
 from jailbreaks.methods.utils import format_name
+
 class PrefixInjection(PromptInjection):
     def __init__(self, suffix: str = "", prefix: str = "", description: str = ""):
         super().__init__()

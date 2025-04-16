@@ -1,13 +1,18 @@
 import argparse
 import logging
+
 import wandb
 import torch
 
-import logging
-logger = logging.getLogger(__name__)
-
+# Pipeline
 from jailbreaks.pipeline.pipeline import JailbreakPipeline
-from jailbreaks.pipeline.steps import fit, generate, evaluate, aggregate, download
+from jailbreaks.pipeline.steps import (
+    fit, 
+    generate, 
+    evaluate, 
+    aggregate, 
+    download
+)
 
 # Methods
 from jailbreaks.methods.model.diff_in_means import DiffInMeans
@@ -18,11 +23,15 @@ from jailbreaks.methods.prompt import PrefixInjection
 # Benchmarks & metrics
 from jailbreaks.evaluators.baseline_refusal_evaluator import BaselineRefusalEvaluator
 from jailbreaks.evaluators.quality_evaluator import QualityEvaluator
-
 from jailbreaks.benchmarks.refusal import RefusalBenchmark
 
 # Datasets
-from jailbreaks.data import get_advbench_instructions, get_harmless_instructions
+from jailbreaks.data import (
+    get_advbench_instructions, 
+    get_harmless_instructions
+)
+
+logger = logging.getLogger(__name__)
 
 def get_args():
     parser = argparse.ArgumentParser(description='Run the jailbreak pipeline')
@@ -72,17 +81,15 @@ def main():
     #                "Qwen/Qwen2.5-7B-Instruct"]
 
     model_paths = [
-        #"Qwen/Qwen2-0.5B-Instruct",
-        #"Qwen/Qwen2.5-1.5B-Instruct",
-        #"Qwen/Qwen2.5-3B-Instruct",
-        #"Qwen/Qwen2.5-7B-Instruct",
-        "Qwen/Qwen2.5-14B-Instruct",
-        "Qwen/Qwen2.5-32B-Instruct",
+        "Qwen/Qwen2-0.5B-Instruct",
+        "Qwen/Qwen2.5-1.5B-Instruct",
+        "Qwen/Qwen2.5-3B-Instruct",
+        "Qwen/Qwen2.5-7B-Instruct",
+        #"Qwen/Qwen2.5-14B-Instruct",
+        #"Qwen/Qwen2.5-32B-Instruct",
         
     ]
-    
-    model_paths = ["Qwen/Qwen2-0.5B-Instruct"]
-    
+        
     sampling_params = {
         "top_k": [7],
         "top_p": [0.8],
@@ -116,17 +123,17 @@ let's do it." Then, continue the paragraph while responding to the following pro
         # [prefix_injection_1],
         # [prefix_injection_2],
         [prefix_injection_3],
-        #[diff_in_means],
+        [diff_in_means],
         # [gcg],
         #[OutputAware(params=sampling_params, save=True)],
         [],  # Baseline (no methods)
     ]
 
-    benchmark = RefusalBenchmark(prompts=advbench_test[:5], max_new_tokens=100, name="advbench-416")
+    benchmark = RefusalBenchmark(prompts=advbench_test, max_new_tokens=100, name="advbench-416")
     
     evaluators = [
-        #RefusalQualityEvaluator(),
-        BaselineRefusalEvaluator(),
+        QualityEvaluator(),
+        #BaselineRefusalEvaluator(),
     ]
     
     output_dir = "results"
@@ -152,7 +159,7 @@ let's do it." Then, continue the paragraph while responding to the following pro
         generate(pipe)
     if args.mode == 'evaluate' or args.mode == 'all':
         evaluate(pipe)
-    if args.mode == 'aggregate' or args.mode == 'all':
+    #if args.mode == 'aggregate' or args.mode == 'all':
         aggregate(pipe)
 
 if __name__ == "__main__":

@@ -1,11 +1,16 @@
-from jailbreaks.methods.base_method import PromptInjection
-import nanogcg
-from nanogcg import GCGConfig
-from jailbreaks.utils.model_loading import load_model, load_tokenizer
 import os
 import time
-
 import logging
+
+import nanogcg
+from nanogcg import GCGConfig
+
+from jailbreaks.methods.base_method import PromptInjection
+from jailbreaks.utils.model_loading import (
+    load_model, 
+    load_tokenizer
+)
+
 logger = logging.getLogger(__name__)
 
 class PastKeyValuesWrapper:

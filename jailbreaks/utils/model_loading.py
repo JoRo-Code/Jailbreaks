@@ -1,7 +1,11 @@
 import os
+
 import torch
+from transformers import (
+    AutoTokenizer, 
+    AutoModelForCausalLM
+)
 from transformer_lens import HookedTransformer
-from transformers import AutoTokenizer, AutoModelForCausalLM
 
 def get_auth_token(provided_token=None):
     return provided_token if provided_token else os.environ.get("HUGGINGFACE_HUB_TOKEN", None)

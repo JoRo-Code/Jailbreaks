@@ -1,8 +1,9 @@
-
-from jailbreaks.pipeline.pipeline import GeneratedResponse
-from jailbreaks.evaluators.base import ResponseEvaluator
 from typing import List
+
 import numpy as np
+
+from jailbreaks.evaluators.base import ResponseEvaluator
+from jailbreaks.pipeline.pipeline import GeneratedResponse
 
 class QualityEvaluator(ResponseEvaluator):
     def __init__(self):

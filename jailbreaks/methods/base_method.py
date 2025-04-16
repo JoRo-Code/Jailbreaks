@@ -1,7 +1,11 @@
 from abc import ABC
 from typing import Dict
+
 import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import (
+    AutoModelForCausalLM, 
+    AutoTokenizer
+)
 
 class JailBreakMethod(ABC):
     def __init__(self, name: str = None):

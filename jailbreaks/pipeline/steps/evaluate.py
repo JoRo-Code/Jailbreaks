@@ -1,10 +1,15 @@
-from jailbreaks.pipeline.pipeline import JailbreakPipeline, EvaluationResult
-from logging import getLogger
 import time
 import json
+import logging
+
 import wandb
 
-logger = getLogger(__name__)
+from jailbreaks.pipeline.pipeline import (
+    JailbreakPipeline, 
+    EvaluationResult
+)
+
+logger = logging.getLogger(__name__)
 
 def evaluate(pipeline: JailbreakPipeline):
     pipeline.load_responses(pipeline.responses_dir)

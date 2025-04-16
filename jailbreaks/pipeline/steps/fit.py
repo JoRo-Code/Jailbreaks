@@ -1,8 +1,8 @@
+import logging
 
-from logging import getLogger
 from jailbreaks.pipeline.pipeline import JailbreakPipeline
 
-logger = getLogger(__name__)
+logger = logging.getLogger(__name__)
 
 def fit(pipeline: JailbreakPipeline, refit: bool = True):
     logger.info("Step 1: Fitting methods")

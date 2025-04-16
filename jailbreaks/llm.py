@@ -1,17 +1,27 @@
 
-from transformers import AutoModelForCausalLM, AutoTokenizer
-import torch
-from typing import List, Dict
-
-from jailbreaks.methods.base_method import JailBreakMethod, PromptInjection, GenerationExploit, ModelManipulation
-
 import logging
-logger = logging.getLogger(__name__)
-
-from jailbreaks.utils.model_loading import load_model, load_tokenizer
-
-from jailbreaks.utils.tokenization import format_prompts, tokenize_prompts
+from typing import List, Dict
 import gc
+
+import torch
+from transformers import AutoModelForCausalLM, AutoTokenizer
+
+from jailbreaks.methods.base_method import (
+    JailBreakMethod, 
+    PromptInjection, 
+    GenerationExploit, 
+    ModelManipulation
+)
+from jailbreaks.utils.model_loading import (
+    load_model, 
+    load_tokenizer
+)
+from jailbreaks.utils.tokenization import (
+    format_prompts, 
+    tokenize_prompts
+)
+
+logger = logging.getLogger(__name__)
 
 class LLM:
     def __init__(self, model_path: str, methods: List[JailBreakMethod]):

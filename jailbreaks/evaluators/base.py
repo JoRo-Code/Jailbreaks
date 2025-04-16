@@ -1,5 +1,6 @@
-from jailbreaks.pipeline.pipeline import GeneratedResponse
 from typing import List
+
+from jailbreaks.pipeline.pipeline import GeneratedResponse
 
 class ResponseEvaluator:
     

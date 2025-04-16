@@ -1,5 +1,6 @@
 from typing import List
 import logging
+
 from transformers import AutoTokenizer
 
 logger = logging.getLogger(__name__)

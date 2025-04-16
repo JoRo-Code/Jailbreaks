@@ -1,6 +1,5 @@
 from jailbreaks.llm import LLM
 
-
 class Benchmark:
     def __init__(self, name=None):
         self.name = name or self.__class__.__name__

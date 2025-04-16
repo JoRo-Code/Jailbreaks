@@ -1,28 +1,31 @@
-from jailbreaks.methods.base_method import ModelManipulation
-from transformers import AutoModelForCausalLM
+import os
+import gc
+import time
+import logging
+import functools
 
 import torch
-from typing import Dict, Any, List, Tuple, Callable
-from jaxtyping import Float, Int
 from torch import Tensor
-import functools
+from typing import Dict, List, Tuple, Callable
+from jaxtyping import Float
+import pandas as pd
+from tqdm import tqdm
 
 from transformer_lens import HookedTransformer, utils
 from transformer_lens.hook_points import HookPoint
 from transformer_lens.utils import einops
 
-import logging
-import os
-from tqdm import tqdm
-import pandas as pd
-import time
-import gc
-
-from jailbreaks.utils.refusal import is_refusal
-from jailbreaks.utils.tokenization import format_prompts, tokenize_prompts
-from jailbreaks.utils.model_loading import load_hooked_transformer, load_tokenizer
-
+from jailbreaks.methods.base_method import ModelManipulation
 from jailbreaks.methods.utils import format_name
+from jailbreaks.utils.refusal import is_refusal
+from jailbreaks.utils.tokenization import (
+    format_prompts, 
+    tokenize_prompts
+)
+from jailbreaks.utils.model_loading import (
+    load_hooked_transformer, 
+    load_tokenizer
+)
 
 logger = logging.getLogger(__name__)
 

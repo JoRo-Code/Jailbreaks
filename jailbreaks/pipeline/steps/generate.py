@@ -1,15 +1,18 @@
-
-from logging import getLogger
-from jailbreaks.pipeline.pipeline import JailbreakPipeline, GeneratedResponse
-from tqdm import tqdm
+import logging
 import time
 import json
+
 import pandas as pd
 import wandb
+from tqdm import tqdm
 
 from jailbreaks.llm import LLM
+from jailbreaks.pipeline.pipeline import (
+    JailbreakPipeline, 
+    GeneratedResponse
+)
 
-logger = getLogger(__name__)
+logger = logging.getLogger(__name__)
 
 def generate(pipeline: JailbreakPipeline):
     logger.info("Step 2: Generating responses")
