@@ -33,8 +33,6 @@ class GenerationExploit(JailBreakMethod):
         super().__init__()
 
     def generate(self, model: AutoModelForCausalLM, inputs: Dict[str, torch.Tensor], tokenizer: AutoTokenizer, **kwargs) -> str:
-        # generate textual response
-        output_tokens = model.generate(**inputs, **kwargs)
-        output_text = tokenizer.decode(output_tokens[0], skip_special_tokens=True)
-        return output_text
+        # old + new tokens
+        return model.generate(**inputs, **kwargs)
 
