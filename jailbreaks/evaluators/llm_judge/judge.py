@@ -123,7 +123,7 @@ class LocalLLMJudge(BaseLLMJudge):
         return self._score_response_fn_batch([prompt])[0]
 
     def _score_response_fn_batch(self, prompts:list[str]) -> str:
-        return self.client.generate_batch(prompts=prompts, max_tokens=50)
+        return self.client.generate_batch(prompts=prompts, max_new_tokens=50)
 
     class Config:
         arbitrary_types_allowed = True
@@ -135,7 +135,7 @@ class GroqLLMJudge(BaseLLMJudge):
             api_key=os.environ.get("GROQ_API_KEY"),
         )
         super().__init__(model=model, client=client)
-    
+ 
     def _score_response_fn(self, prompt:str) -> str:
         response = self.client.chat.completions.create(
             model=self.model,
