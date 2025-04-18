@@ -24,7 +24,7 @@ from jailbreaks.utils.tokenization import (
 logger = logging.getLogger(__name__)
 
 class LLM:
-    def __init__(self, model_path: str, methods: List[JailBreakMethod]):
+    def __init__(self, model_path: str, methods: List[JailBreakMethod] = []):
         self.model = load_model(model_path)
         self.name = model_path
         self.tokenizer = load_tokenizer(model_path)

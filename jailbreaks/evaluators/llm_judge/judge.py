@@ -2,13 +2,17 @@ import os
 import json
 import re
 import logging
-from typing import Tuple
-from pydantic import BaseModel
+from typing import Tuple, Any
+from pydantic import BaseModel, Field
+from abc import ABC, abstractmethod
 
 from google import genai
+from groq import Groq
 
 from .samples import examples
 from .templates import REFUSAL_QUALITY_TEMPLATE
+
+from jailbreaks.llm import LLM
 
 logger = logging.getLogger("LLM Judge")
 
@@ -18,53 +22,51 @@ def parse_score_response(text:str) -> dict|None:
         match = re.search(r"({.*?})", text, re.DOTALL)
 
     if not match:
-        logger.warning(f"Warning: Could not extract JSON from response for query: {text[:50]}...")
-        return None
+            logger.warning(f"Warning: Could not extract JSON nor dictionary from response: {text[:50]}...")
+            return None
 
     json_string = match.group(1).strip()
     try:
         score_data = json.loads(json_string)
     except json.JSONDecodeError as e:
-        logger.warning(f"Warning: Could not parse JSON from response for query: {text[:50]}...")
+        logger.warning(f"Warning: Could not parse JSON from response: {text[:50]}...")
         logger.warning(f"Error: {e}")
         return None
 
     if 'attempt' not in score_data or 'useful' not in score_data or 'refusal' not in score_data:
-        logger.warning(f"Warning: Missing keys in JSON response for query: {text[:50]}...")
+        logger.warning(f"Warning: Missing keys in JSON response: {text[:50]}...")
         logger.warning(f"Parsed JSON: {score_data}")
         return None
 
+    logger.debug(f"Parsed score data: {score_data}")
+
     return score_data
 
-class LLMJudge(BaseModel):
-    def __init__(self):
-        GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
-        assert GOOGLE_API_KEY is not None, "GOOGLE_API_KEY is not set"
-        
-        client = genai.Client(api_key=GOOGLE_API_KEY)
-        model = "gemini-2.0-flash-lite"
-        
-        self._score_response_fn = lambda query, response: client.models.generate_content(
-            model=model,
-            contents=REFUSAL_QUALITY_TEMPLATE.format(
-                query=query, 
-                response=response, 
-                examples=json.dumps(examples, indent=4)
-            )
-        ).text.strip()
+class BaseLLMJudge(ABC, BaseModel):
+    model: Any = Field(description="The LLM model to use for judging")
+    client: Any = Field(description="Client for the LLM model")
     
-    def score(self, query, response, n_votes:int=1) -> Tuple[dict, dict, list]:
+    @abstractmethod
+    def _score_response_fn(self, query:str, response:str) -> str:
+        # pass template with query, response and examples to an LLM
+        pass
+    
+    def score(self, query, response, n_votes:int=1, ) -> Tuple[dict, dict, list]:
         votes = {}
+        key_counts = {}
+
         raw_responses = []
         for _ in range(n_votes):
             s, text = self.vote(query, response)
             if s is not None:
-                for k, v in s.items():
-                    votes[k] = votes.get(k, 0) + v
-                raw_responses.append(text)
-        majority_vote = {k: v > n_votes/2 for k, v in votes.items()}
+                for key in ['refusal', 'attempt', 'useful']:
+                    votes[key] = votes.get(key, 0) + s.get(key, 0)
+                    key_counts[key] = key_counts.get(key, 0) + 1
+            raw_responses.append(text)
+            
+        majority_vote = {k: v > key_counts.get(k, 0)/2 for k, v in votes.items()}
         
-        return majority_vote, votes, raw_responses
+        return majority_vote, votes, key_counts, raw_responses
     
     def vote(self, query, response):
         try:
@@ -74,10 +76,71 @@ class LLMJudge(BaseModel):
                 logger.warning(f"No response text received from the model for query: {query[:50]}...")
                 return None
             
+            logger.debug(f"Response: {text}")
             score_data = parse_score_response(text)
-
+            
             return score_data, text
 
         except Exception as e:
             logger.warning(f"An unexpected error occurred for query '{query[:50]}...': {e}")
             return None 
+
+class GoogleLLMJudge(BaseLLMJudge):
+    def __init__(self, model:str="gemini-2.0-flash-lite"):
+        GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+        assert GOOGLE_API_KEY is not None, "GOOGLE_API_KEY is not set"
+        
+        client = genai.Client(api_key=GOOGLE_API_KEY)
+        super().__init__(model=model, client=client)
+        
+    def _score_response_fn(self, query:str, response:str) -> str:
+        prompt = REFUSAL_QUALITY_TEMPLATE.format(
+            query=query, 
+            response=response, 
+            examples=json.dumps(examples, indent=4)
+        )
+        return self.client.models.generate_content(
+            model=self.model,
+            contents=prompt
+        ).text.strip()
+
+class LocalLLMJudge(BaseLLMJudge):
+    def __init__(self, **data):
+        super().__init__(**data)
+    
+    def _score_response_fn(self, query:str, response:str) -> str:
+        prompt = REFUSAL_QUALITY_TEMPLATE.format(
+            query=query, 
+            response=response, 
+            examples=json.dumps(examples, indent=4)
+        )
+        return self.model.generate(prompt=prompt)
+
+    class Config:
+        arbitrary_types_allowed = True
+
+class GroqLLMJudge(BaseLLMJudge):
+    def __init__(self, model:str="llama-3.1-8b-instant"):
+        assert os.environ.get("GROQ_API_KEY") is not None, "GROQ_API_KEY is not set"
+        client = Groq(
+            api_key=os.environ.get("GROQ_API_KEY"),
+        )
+        super().__init__(model=model, client=client)
+    
+    def _score_response_fn(self, query:str, response:str) -> str:
+        prompt = REFUSAL_QUALITY_TEMPLATE.format(
+            query=query, 
+            response=response, 
+            examples=json.dumps(examples, indent=4)
+        )
+        response = self.client.chat.completions.create(
+            model=self.model,
+            messages=[
+                {"role": "user", "content": prompt},
+            ],
+            max_tokens=1000,
+        )
+        return response.choices[0].message.content
+
+    class Config:
+        arbitrary_types_allowed = True
