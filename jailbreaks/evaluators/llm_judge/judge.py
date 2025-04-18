@@ -20,12 +20,18 @@ def parse_score_response(text:str) -> dict|None:
     match = re.search(r"```json\s*({.*?})\s*```", text, re.DOTALL)
     if not match:
         match = re.search(r"({.*?})", text, re.DOTALL)
-
+    
     if not match:
+        match = re.search(r"({[^}]*)", text, re.DOTALL)
+        if match:
+            # Attempt to fix incomplete JSON by adding missing closing brace
+            json_string = match.group(1).strip() + "}"
+        else:
             logger.warning(f"Warning: Could not extract JSON nor dictionary from response: {text[:50]}...")
             return None
-
-    json_string = match.group(1).strip()
+    else:
+        json_string = match.group(1).strip()
+    
     try:
         score_data = json.loads(json_string)
     except json.JSONDecodeError as e:
@@ -105,8 +111,9 @@ class GoogleLLMJudge(BaseLLMJudge):
         ).text.strip()
 
 class LocalLLMJudge(BaseLLMJudge):
-    def __init__(self, **data):
-        super().__init__(**data)
+    def __init__(self, model:str):
+        client = LLM(model_path=model)
+        super().__init__(model=model, client=client)
     
     def _score_response_fn(self, query:str, response:str) -> str:
         prompt = REFUSAL_QUALITY_TEMPLATE.format(
@@ -114,7 +121,7 @@ class LocalLLMJudge(BaseLLMJudge):
             response=response, 
             examples=json.dumps(examples, indent=4)
         )
-        return self.model.generate(prompt=prompt)
+        return self.client.generate(prompt=prompt)
 
     class Config:
         arbitrary_types_allowed = True

@@ -6,7 +6,11 @@ import json
 import logging
 from datetime import datetime
 
-from jailbreaks.evaluators.llm_judge.judge import GroqLLMJudge, GoogleLLMJudge
+from jailbreaks.evaluators.llm_judge.judge import (
+    GroqLLMJudge,
+    GoogleLLMJudge,
+    LocalLLMJudge
+)
 from jailbreaks.evaluators.llm_judge.samples import test_samples
 
 logger = logging.getLogger("LLM Judge")
@@ -17,14 +21,16 @@ if __name__ == "__main__":
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
     )
     
-    # judge = LocalLLMJudge(
-    #     #model=LLM(model_path="Qwen/Qwen2-0.5B-Instruct")
-    #     model=LLM(model_path="meta-llama/Llama-3.1-8B-Instruct")
-    # )
+    judge = LocalLLMJudge(
+        #model="Qwen/Qwen2-0.5B-Instruct"
+        model="Qwen/Qwen2.5-7B-Instruct"
+    )
     
-    judge = GroqLLMJudge(model="llama-3.1-8b-instant")
-    judge = GoogleLLMJudge(model="gemini-2.0-flash-lite")
-    judge = GoogleLLMJudge(model="gemini-1.5-flash")
+    # judge = GroqLLMJudge(model="llama-3.1-8b-instant")
+    # judge = GoogleLLMJudge(model="gemini-2.0-flash-lite")
+    # judge = GoogleLLMJudge(model="gemini-1.5-flash")
+    
+    N_VOTES = 1
     
     results = []
     total_evaluated = 0
@@ -38,7 +44,7 @@ if __name__ == "__main__":
         logger.info(f"\n--- Evaluating Sample {i+1} ---")
         logger.info(f"Prompt: {gen_response['prompt'][:80]}...")
         
-        majority_vote, votes, n_votes, raw_votes = judge.score(gen_response["prompt"], gen_response["response"], n_votes=5)
+        majority_vote, votes, n_votes, raw_votes = judge.score(gen_response["prompt"], gen_response["response"], n_votes=N_VOTES)
         
         s = majority_vote
         
@@ -100,13 +106,15 @@ if __name__ == "__main__":
             "detailed_results": []
         }
         
-    results_filename = f"llm_judge_results_{judge.model}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+    results_filename = f"llm_judge_results_{judge.model.replace('/', '_')}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
     try:
         with open(results_filename, 'w') as f:
             json.dump(output, f, indent=4)
         logger.info(f"\nEvaluation results saved to {results_filename}")
-    except IOError as e:
+    except Exception as e:
         logger.error(f"\nError saving results to {results_filename}: {e}")
+        
+    
 
     logger.info("\n--- Evaluation Summary ---")
     if total_evaluated > 0:
