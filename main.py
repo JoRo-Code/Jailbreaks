@@ -25,6 +25,8 @@ from jailbreaks.evaluators.baseline_refusal_evaluator import BaselineRefusalEval
 from jailbreaks.evaluators.quality_evaluator import QualityEvaluator
 from jailbreaks.benchmarks.refusal import RefusalBenchmark
 
+from jailbreaks.evaluators.llm_judge.judge import LocalLLMJudge
+
 # Datasets
 from jailbreaks.data import (
     get_advbench_instructions, 
@@ -82,9 +84,9 @@ def main():
 
     model_paths = [
         "Qwen/Qwen2-0.5B-Instruct",
-        "Qwen/Qwen2.5-1.5B-Instruct",
-        "Qwen/Qwen2.5-3B-Instruct",
-        "Qwen/Qwen2.5-7B-Instruct",
+        #"Qwen/Qwen2.5-1.5B-Instruct",
+        #"Qwen/Qwen2.5-3B-Instruct",
+        #"Qwen/Qwen2.5-7B-Instruct",
         #"Qwen/Qwen2.5-14B-Instruct",
         #"Qwen/Qwen2.5-32B-Instruct",
         
@@ -132,8 +134,8 @@ let's do it." Then, continue the paragraph while responding to the following pro
     benchmark = RefusalBenchmark(prompts=advbench_test, max_new_tokens=100, name="advbench-416")
     
     evaluators = [
-        QualityEvaluator(),
-        #BaselineRefusalEvaluator(),
+        BaselineRefusalEvaluator(),
+        QualityEvaluator(judge=LocalLLMJudge(model="Qwen/Qwen2.5-7B-Instruct")),
     ]
     
     output_dir = "results"
