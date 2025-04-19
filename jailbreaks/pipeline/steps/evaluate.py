@@ -94,17 +94,13 @@ def _evaluate_responses_internal(pipeline: JailbreakPipeline):
                     wandb.log(log_dict)
                     
                     # Create results table
-                    results_table = wandb.Table(columns=["prompt", "response", "success", "score"])
+                    cols = sample_results[0].keys()
+                    results_table = wandb.Table(columns=cols)
                     for result in sample_results:
-                        results_table.add_data(
-                            result.get("prompt", ""),
-                            result.get("response", ""),
-                            result.get("success", False),
-                            result.get("score", 0.0)
-                        )
+                        results_table.add_data(*[result.get(col, "") for col in cols])
                     
                     # Log table
-                    wandb.log({f"{benchmark_key}_{model_name}_{method_combo}_results": results_table})
+                    wandb.log({f"{benchmark_key}_{model_name}_{method_combo}_{evaluator_name}_results": results_table})
                     
                     # Save evaluation results
                     pipeline.save_evaluation(eval_result, benchmark_key, model_name, method_combo, evaluator_name)
