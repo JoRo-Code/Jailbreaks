@@ -23,12 +23,12 @@ if __name__ == "__main__":
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
     )
     
-    # judge = LocalLLMJudge(
-    #     #model="Qwen/Qwen2-0.5B-Instruct"
-    #     model="Qwen/Qwen2.5-7B-Instruct"
-    # )
+    judge = LocalLLMJudge(
+        #model="Qwen/Qwen2-0.5B-Instruct"
+        model="Qwen/Qwen2.5-7B-Instruct"
+    )
     
-    judge = GroqLLMJudge(model="llama-3.1-8b-instant")
+    # judge = GroqLLMJudge(model="llama-3.1-8b-instant")
     # judge = GoogleLLMJudge(model="gemini-2.0-flash-lite")
     #judge = GoogleLLMJudge(model="gemini-1.5-flash")
         

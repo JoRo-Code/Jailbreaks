@@ -176,7 +176,7 @@ class LocalLLMJudge(BaseLLMJudge):
         return self._score_response_fn_batch([prompt])[0]
 
     def _score_response_fn_batch(self, prompts:list[str]) -> str:
-        return self.client.generate_batch(prompts=prompts, max_new_tokens=50)
+        return self.client.generate_batch(prompts=prompts, max_new_tokens=200)
 
     class Config:
         arbitrary_types_allowed = True
