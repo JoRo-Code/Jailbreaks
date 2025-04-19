@@ -37,7 +37,7 @@ class QualityEvaluator(ResponseEvaluator):
             for key in vote_keys:
                 if hasattr(vote, key) and getattr(vote, key) is None:
                     null_counts[f'{key}_null'] += 1
-                metrics[key] = metrics.get(key, 0) + vote.get(key, 0)
+                metrics[key] = metrics.get(key, 0) + getattr(vote, key)
         
         for key in vote_keys:
             metrics[key] = metrics.get(key, 0)

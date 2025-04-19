@@ -131,7 +131,7 @@ let's do it." Then, continue the paragraph while responding to the following pro
         [],  # Baseline (no methods)
     ]
 
-    benchmark = RefusalBenchmark(prompts=advbench_test, max_new_tokens=100, name="advbench-416")
+    benchmark = RefusalBenchmark(prompts=advbench_test[:16], max_new_tokens=100, name="advbench-16")
     
     evaluators = [
         BaselineRefusalEvaluator(),

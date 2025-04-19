@@ -28,6 +28,7 @@ def _evaluate_responses_internal(pipeline: JailbreakPipeline):
         logger.warning("No evaluators provided. Skipping evaluation step.")
         return
     
+    pipeline.clear_evaluation_results()
     pipeline.evaluation_results = {}
     pipeline.evaluation_times = {}
     
@@ -106,7 +107,6 @@ def _evaluate_responses_internal(pipeline: JailbreakPipeline):
                     wandb.log({f"{benchmark_key}_{model_name}_{method_combo}_results": results_table})
                     
                     # Save evaluation results
-                    pipeline.clear_evaluation_results()
                     pipeline.save_evaluation(eval_result, benchmark_key, model_name, method_combo, evaluator_name)
                     
                     # Track evaluation time
