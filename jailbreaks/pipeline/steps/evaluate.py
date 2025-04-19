@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 def evaluate(pipeline: JailbreakPipeline):
     pipeline.load_responses(pipeline.responses_dir)
     run_name = f"evaluation_{pipeline.run_id}"
-    wandb.init(project=pipeline.project_name, name=run_name, id=pipeline.run_id)
+    wandb.init(project=pipeline.project_name, name=run_name, id=run_name)
     logger.info(f"W&B experiment initialized: {run_name}")
     logger.info("Step 3: Evaluating responses")
     _evaluate_responses_internal(pipeline)

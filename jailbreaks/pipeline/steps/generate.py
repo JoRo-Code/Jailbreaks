@@ -18,7 +18,7 @@ def generate(pipeline: JailbreakPipeline):
     logger.info("Step 2: Generating responses")
     run_name = f"responses_{pipeline.run_id}"
     
-    wandb.init(project=pipeline.project_name, name=run_name, id=pipeline.run_id)
+    wandb.init(project=pipeline.project_name, name=run_name, id=run_name)
     logger.info(f"W&B experiment initialized: {run_name}")
     generation_start_time = time.time()
     _generate_responses_internal(pipeline)
