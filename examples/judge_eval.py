@@ -2,9 +2,11 @@ import sys
 from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent))
 
+import os
 import json
 import logging
 from datetime import datetime
+from typing import Dict, Any, List
 
 from jailbreaks.evaluators.llm_judge.judge import (
     GroqLLMJudge,
@@ -29,9 +31,7 @@ if __name__ == "__main__":
     judge = GroqLLMJudge(model="llama-3.1-8b-instant")
     # judge = GoogleLLMJudge(model="gemini-2.0-flash-lite")
     #judge = GoogleLLMJudge(model="gemini-1.5-flash")
-    
-    N_VOTES = 3
-    
+        
     results = []
     total_evaluated = 0
     
@@ -40,18 +40,51 @@ if __name__ == "__main__":
     useful_correct = 0
     
     logger.info("Starting evaluation...")
-    for i, gen_response in enumerate(test_samples):
+    
+    n_votes_per_sample = 3
+    
+    # Collect multiple votes per sample
+    all_votes = []
+    for i in range(n_votes_per_sample):
+        logger.info(f"Collecting vote set {i+1}/{n_votes_per_sample}...")
+        votes = judge.vote_batch(
+            [gen_response["prompt"] for gen_response in test_samples],
+            [gen_response["response"] for gen_response in test_samples]
+        )
+        all_votes.append(votes)
+    
+    # Organize votes by sample
+    sample_votes = [[] for _ in range(len(test_samples))]
+    for vote_set in all_votes:
+        for i, vote in enumerate(vote_set):
+            sample_votes[i].append(vote)
+    
+    # Process each sample with its multiple votes
+    for i, votes_for_sample in enumerate(sample_votes):
+        assert all(vote.prompt == test_samples[i]["prompt"] for vote in votes_for_sample), f"Prompt mismatch for sample {i+1}"
         logger.info(f"\n--- Evaluating Sample {i+1} ---")
-        logger.info(f"Prompt: {gen_response['prompt'][:80]}...")
+        logger.info(f"Prompt: {votes_for_sample[0].prompt[:80]}...")
         
-        majority_vote, votes, n_votes, raw_votes = judge.score(gen_response["prompt"], gen_response["response"], n_votes=N_VOTES)
+        # Determine final classification by majority voting
+        attempts = [vote.attempt for vote in votes_for_sample]
+        usefuls = [vote.useful for vote in votes_for_sample]
+        refusals = [vote.refusal for vote in votes_for_sample]
         
-        s = majority_vote
-        
+        # Filter out None values when finding most common response
+        def most_common_non_none(values):
+            filtered = [v for v in values if v is not None]
+            if not filtered:
+                return None
+            return max(set(filtered), key=filtered.count)
+            
+        final_attempt = most_common_non_none(attempts)
+        final_useful = most_common_non_none(usefuls)
+        final_refusal = most_common_non_none(refusals)
+                    
         total_evaluated += 1
-        is_attempt_correct = (gen_response["attempt"] == s.get("attempt"))
-        is_useful_correct = (gen_response["useful"] == s.get("useful"))
-        is_refusal_correct = (gen_response["refusal"] == s.get("refusal"))
+        is_attempt_correct = (test_samples[i]["attempt"] == final_attempt)
+        is_useful_correct = (test_samples[i]["useful"] == final_useful)
+        is_refusal_correct = (test_samples[i]["refusal"] == final_refusal)
         if is_attempt_correct:
             attempt_correct += 1
         if is_useful_correct:
@@ -60,20 +93,23 @@ if __name__ == "__main__":
             refusal_correct += 1
             
         results.append({
-            "prompt": gen_response["prompt"],
-            "response": gen_response["response"],
-            "LLM_responses": raw_votes,
-            "truth_attempt": gen_response["attempt"],
-            "truth_useful": gen_response["useful"],
-            "truth_refusal": gen_response["refusal"],
-            "pred_attempt": s.get("attempt"),
-            "pred_useful": s.get("useful"),
-            "pred_refusal": s.get("refusal"),
+            "prompt": votes_for_sample[0].prompt,
+            "response": votes_for_sample[0].response,
+            "LLM_responses": [vote.llm_response for vote in votes_for_sample],
+            "votes": [{
+                "attempt": vote.attempt,
+                "useful": vote.useful,
+                "refusal": vote.refusal
+            } for vote in votes_for_sample],
+            "truth_attempt": test_samples[i]["attempt"],
+            "truth_useful": test_samples[i]["useful"],
+            "truth_refusal": test_samples[i]["refusal"],
+            "pred_attempt": final_attempt,
+            "pred_useful": final_useful,
+            "pred_refusal": final_refusal,
             "is_attempt_correct": is_attempt_correct,
             "is_useful_correct": is_useful_correct,
             "is_refusal_correct": is_refusal_correct,
-            "votes": votes,
-            "n_votes": n_votes
         })
         
     # Calculate summary metrics before writing to file
@@ -105,8 +141,10 @@ if __name__ == "__main__":
             "overview": {"error": "No samples were successfully evaluated."},
             "detailed_results": []
         }
-        
-    results_filename = f"llm_judge_results_{judge.model.replace('/', '_')}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+    
+    output_dir = "llm_judge_results"
+    os.makedirs(output_dir, exist_ok=True)
+    results_filename = f"{output_dir}/{judge.model.replace('/', '_')}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
     try:
         with open(results_filename, 'w') as f:
             json.dump(output, f, indent=4)
