@@ -94,7 +94,7 @@ def _evaluate_responses_internal(pipeline: JailbreakPipeline):
                     wandb.log(log_dict)
                     
                     # Create results table
-                    cols = sample_results[0].keys()
+                    cols = list(sample_results[0].keys())
                     results_table = wandb.Table(columns=cols)
                     for result in sample_results:
                         results_table.add_data(*[result.get(col, "") for col in cols])

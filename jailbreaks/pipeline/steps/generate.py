@@ -186,10 +186,10 @@ def _generate_responses_internal(pipeline: JailbreakPipeline):
                 csv_file = pipeline.responses_dir / f"responses_{benchmark_key}_{model_short_name}_{combo_key}.csv"
                 response_df.to_csv(csv_file, index=False)
                 logger.info(f"Saved responses to {output_path}")
-
-                # TODO: Log artifact
+                    
                 
-                # response_table = wandb.Table(dataframe=response_df)
+                response_table = wandb.Table(dataframe=response_df)
+                wandb.log({f"{benchmark_key}_{model_short_name}_{combo_key}_responses": response_table})
                 
                 # response_table_artifact = wandb.Artifact(f"{benchmark_key}_{model_short_name}_{combo_key}_responses", type="dataset")
                 # response_table_artifact.add(response_table, "response_table")
