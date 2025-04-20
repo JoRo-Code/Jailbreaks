@@ -144,7 +144,10 @@ let's do it." Then, continue the paragraph while responding to the following pro
         #QualityEvaluator(judge=LocalLLMJudge(model="Qwen/Qwen2.5-7B-Instruct")),
     ]
     
-    output_dir = f"results/{args.project_name}"
+    output_dir = Path(f"results/{args.project_name}")
+    responses_dir = output_dir / "responses"
+    evaluations_dir = output_dir / "evaluations"
+    aggregated_results_dir = output_dir / "aggregated_results"
     
     pipe = JailbreakPipeline(
         project_name=args.project_name,
@@ -167,18 +170,18 @@ let's do it." Then, continue the paragraph while responding to the following pro
     if args.mode == 'evaluate' or args.mode == 'all':
         evaluate(EvaluationConfig(
             project_name=args.project_name,
-            responses_dir=Path(f"responses"),
-            evaluations_dir=Path(f"evaluations"),
+            responses_dir=responses_dir,
+            evaluations_dir=evaluations_dir,
             evaluators=evaluators,
             eval_run_id=args.eval_run_id
         ))
     if args.mode == 'aggregate' or args.mode == 'all':
         aggregate(AggregateConfig(
             project_name=args.project_name,
-            evaluations_dir=Path(f"tmp_evaluations"),
-            output_dir=Path(f"aggregated_results"),
+            evaluations_dir=evaluations_dir,
+            output_dir=aggregated_results_dir,
             eval_run_id=args.eval_run_id,
-            use_local=True
+            use_local=True # should be downloaded from wandb (evaluate downloads)
         ))
 
 if __name__ == "__main__":

@@ -56,10 +56,11 @@ uv run main.py --mode fit
 
 uv run main.py --mode generate
 
-uv run main.py --mode evaluate 
+uv run main.py --mode evaluate
+uv run main.py --mode evaluate --eval-run-id abcd0123 --project-name jailbreaks 
 
 uv run main.py --mode aggregate
-uv run main.py --mode aggregate --eval-run-id 02b368a6-4269-42b7-a9f6-65254203f249 --project-name teest
+uv run main.py --mode aggregate --eval-run-id abcd0123 --project-name jailbreaks
 ```
 
 ### TODO:
