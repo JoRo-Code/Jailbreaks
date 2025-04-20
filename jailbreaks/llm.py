@@ -1,10 +1,10 @@
 
+import gc
 import logging
 from typing import List, Dict
-import gc
 
 import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformer_lens import HookedTransformer
 
 from jailbreaks.methods.base_method import (
     JailBreakMethod, 
@@ -84,11 +84,6 @@ class LLM:
         inputs = toks.input_ids
         attention_mask = toks.attention_mask
         
-        from transformer_lens import HookedTransformer
-        if isinstance(self.model, HookedTransformer):
-            logger.debug(f"Using HookedTransformer")
-        else:
-            logger.debug(f"Using AutoModelForCausalLM")
         self.model.eval()
         
         # generation
@@ -97,10 +92,12 @@ class LLM:
             if isinstance(method, GenerationExploit):
                 output_tokens = method.generate_batch(self.model, self.tokenizer, toks, self._model_method_combo(), **kwargs)
         if output_tokens is None:
-            if isinstance(self.model, AutoModelForCausalLM):
-                output_tokens = self.model.generate(inputs, attention_mask=attention_mask, **kwargs)
-            else:
+            if isinstance(self.model, HookedTransformer):
+                logger.debug(f"Using HookedTransformer")
                 output_tokens = self.model.generate(inputs, **kwargs)
+            else:
+                logger.debug(f"Using AutoModelForCausalLM")
+                output_tokens = self.model.generate(inputs, attention_mask=attention_mask, **kwargs)
                 
         # decode
         output = [self.tokenizer.decode(o[inputs.shape[1]:], skip_special_tokens=True) for o in output_tokens]

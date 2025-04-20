@@ -80,7 +80,7 @@ class BaseLLMJudge(ABC, BaseModel):
             examples=json.dumps(examples, indent=4)
         )
 
-    def vote_batch(self, queries:list[str], responses:list[str], batch_size:int=8) -> list[dict]:
+    def vote_batch(self, queries:list[str], responses:list[str], batch_size:int=32) -> list[dict]:
         try:
             all_votes = []
             
