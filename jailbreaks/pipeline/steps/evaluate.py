@@ -28,7 +28,7 @@ class EvaluationConfig:
     responses_dir: Path
     evaluations_dir: Path
     evaluators: List[ResponseEvaluator]
-    
+    eval_run_id: str # optional
 
 def evaluate(evaluation_config: EvaluationConfig):
     fetch_all_artifacts(
@@ -39,7 +39,9 @@ def evaluate(evaluation_config: EvaluationConfig):
 
     generated_responses = load_responses(evaluation_config.responses_dir)
     
-    eval_id = str(uuid.uuid4())
+    eval_id = evaluation_config.eval_run_id
+    if not eval_id:
+        eval_id = str(uuid.uuid4())[:8]
 
     run_name = f"evaluation_{eval_id}"
     wandb.init(project=evaluation_config.project_name, name=run_name, id=run_name)

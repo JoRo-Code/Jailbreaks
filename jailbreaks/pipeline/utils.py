@@ -27,11 +27,15 @@ def fetch_all_artifacts(
     project:str, 
     output_dir:pathlib.Path, 
     art_type:str, 
+    run_ids:list[str]=None,
     threads:int=8
     ):
     runs: wandb.Api.runs = wandb.Api().runs(f"{project}")
     fetch_arts = functools.partial(fetch_artifacts, output_dir=output_dir, art_type=art_type)
     logger.info("Fetching artifacts from %s", project)
+    
+    if run_ids:
+        runs = [run for run in runs if run.id in run_ids]
     
     with concurrent.futures.ThreadPoolExecutor(max_workers=threads) as ex:
         for finished in ex.map(fetch_arts, runs):
@@ -130,23 +134,11 @@ def response_parser(file_path: Path, context: dict) -> list[GeneratedResponse]:
     
     return responses
 
-def evaluation_parser(file_path: Path, context: dict) -> list[GeneratedResponse]:
+def evaluation_parser(file_path: Path, context: dict) -> list[EvaluationResult]:
     """Parser function for response CSV files"""
     response_df = pd.read_csv(file_path)
     
-    responses = []
-    for _, row in response_df.iterrows():
-        gen_response = EvaluationResult(
-            model_id=row.get('model_id', ''),
-            method_config={"name": row.get('method_combo', '')},
-            evaluator_name=row.get('evaluator_name', ''),
-            metrics=row.get('metrics', {}),
-            runtime_seconds=row.get('runtime_seconds', 0),
-            sample_results=row.get('sample_results', [])
-        )
-        responses.append(gen_response)
-    
-    return responses
+    return response_df  
 
 def load_responses(responses_dir: Path) -> dict:
     """
@@ -156,7 +148,74 @@ def load_responses(responses_dir: Path) -> dict:
     return load_structured_data(responses_dir, "*.csv", response_parser)
 
 def load_evaluations(evaluations_dir: Path) -> dict:
-    return load_structured_data(evaluations_dir, "*.csv", evaluation_parser)
+    """
+    Scans the evaluations directory structure and loads all CSV files found.
+    Directory structure expected: benchmark_key/model_name/method_combo/evaluator_name/evaluations_run_id.csv
+    """
+    result = {}
+    
+    for benchmark_path in evaluations_dir.glob("*"):
+        if not benchmark_path.is_dir():
+            continue
+        
+        benchmark_key = benchmark_path.name
+        logger.info(f"Processing benchmark: {benchmark_key}")
+        
+        if benchmark_key not in result:
+            result[benchmark_key] = {}
+        
+        for model_path in benchmark_path.glob("*"):
+            if not model_path.is_dir():
+                continue
+            
+            model_name = model_path.name
+            logger.info(f"  Processing model: {model_name}")
+            if model_name not in result[benchmark_key]:
+                result[benchmark_key][model_name] = {}
+            
+            for combo_path in model_path.glob("*"):
+                if not combo_path.is_dir():
+                    continue
+                
+                method_combo = combo_path.name
+                logger.info(f"    Processing method combo: {method_combo}")
+
+                if method_combo not in result[benchmark_key][model_name]:
+                    result[benchmark_key][model_name][method_combo] = {}
+                
+                # Add evaluator level
+                for evaluator_path in combo_path.glob("*"):
+                    if not evaluator_path.is_dir():
+                        continue
+                    
+                    evaluator_name = evaluator_path.name
+                    logger.info(f"      Processing evaluator: {evaluator_name}")
+                    
+                    if evaluator_name not in result[benchmark_key][model_name][method_combo]:
+                        result[benchmark_key][model_name][method_combo][evaluator_name] = {}
+                    
+                    # Look for matching files
+                    for file_path in evaluator_path.glob("*.csv"):
+                        logger.info(f"        Loading file: {file_path}")
+                        
+                        try:
+                            context = {
+                                "benchmark": benchmark_key,
+                                "model_name": model_name,
+                                "method_combo": method_combo,
+                                "evaluator_name": evaluator_name,
+                                "file_name": file_path.stem
+                            }
+                            
+                            parsed_data = evaluation_parser(file_path, context)
+                            result[benchmark_key][model_name][method_combo][evaluator_name][file_path.stem] = parsed_data
+                                
+                        except Exception as e:
+                            logger.error(f"Error processing {file_path}: {str(e)}")
+                            import traceback
+                            logger.error(traceback.format_exc())
+    
+    return result
 
 if __name__ == "__main__":
     fetch_all_artifacts(
