@@ -166,10 +166,6 @@ def _generate_responses_internal(pipeline: JailbreakPipeline):
                 
                 jailbreak_model.clear_cache()
                 
-                # Store responses
-                key = f"{model_short_name}_{combo_key}"
-                pipeline.generated_responses[benchmark_key][key] = responses
-                
                 # Log generation metrics
                 wandb.log({
                     "benchmark": benchmark_name,
@@ -199,6 +195,7 @@ def _generate_responses_internal(pipeline: JailbreakPipeline):
                 # add file for download
                 path = f"{benchmark_key}/{model_short_name}/{combo_key}/responses-{pipeline.run_id}.csv"
 
+                # could also just have them locally, without temp file
                 csv_path = Path("tmp_responses") / path
                 os.makedirs(csv_path.parent, exist_ok=True)
                 response_df.to_csv(csv_path, index=False)
@@ -208,7 +205,7 @@ def _generate_responses_internal(pipeline: JailbreakPipeline):
                 
                 os.remove(csv_path)
 
-                wandb.log_artifact(artifact) # TODO: check if need to use run - run.log_artifact(artifact)
+                wandb.log_artifact(artifact)
 
                 
     

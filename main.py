@@ -1,5 +1,6 @@
 import argparse
 import logging
+from pathlib import Path
 
 import wandb
 import torch
@@ -13,6 +14,8 @@ from jailbreaks.pipeline.steps import (
     aggregate, 
     download
 )
+
+from jailbreaks.pipeline.steps.evaluate import EvaluationConfig
 
 # Methods
 from jailbreaks.methods.model.diff_in_means import DiffInMeans
@@ -136,7 +139,7 @@ let's do it." Then, continue the paragraph while responding to the following pro
     
     evaluators = [
         BaselineRefusalEvaluator(),
-        QualityEvaluator(judge=LocalLLMJudge(model="Qwen/Qwen2.5-7B-Instruct")),
+        #QualityEvaluator(judge=LocalLLMJudge(model="Qwen/Qwen2.5-7B-Instruct")),
     ]
     
     output_dir = f"results/{args.project_name}"
@@ -161,9 +164,14 @@ let's do it." Then, continue the paragraph while responding to the following pro
     if args.mode == 'generate' or args.mode == 'all':
         generate(pipe)
     if args.mode == 'evaluate' or args.mode == 'all':
-        evaluate(pipe)
-    if args.mode == 'aggregate' or args.mode == 'all':
-        aggregate(pipe)
+        evaluate(EvaluationConfig(
+            project_name=args.project_name,
+            responses_dir=Path(f"responses"),
+            evaluations_dir=Path(f"evaluations"),
+            evaluators=evaluators
+        ))
+    # if args.mode == 'aggregate' or args.mode == 'all':
+    #     aggregate(pipe)
 
 if __name__ == "__main__":
     main()
