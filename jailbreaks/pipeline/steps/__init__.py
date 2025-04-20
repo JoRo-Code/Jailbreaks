@@ -4,4 +4,9 @@ from .download import download
 from .generate import generate
 from .evaluate import evaluate
 
-__all__ = ["fit", "aggregate", "download", "generate", "evaluate"]
+from .fit import FitConfig
+from .generate import GenerateConfig
+from .evaluate import EvaluationConfig
+from .aggregate import AggregateConfig
+
+__all__ = ["fit", "aggregate", "download", "generate", "evaluate", "FitConfig", "GenerateConfig", "EvaluationConfig", "AggregateConfig"]

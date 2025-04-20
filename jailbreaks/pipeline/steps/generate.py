@@ -2,98 +2,111 @@ import os
 import logging
 import time
 from pathlib import Path
+from dataclasses import dataclass
+from typing import List
 
 import pandas as pd
 import wandb
 from tqdm import tqdm
 
 from jailbreaks.llm import LLM
-from jailbreaks.pipeline.pipeline import (
-    JailbreakPipeline, 
+from jailbreaks.pipeline.schemas import (
     GeneratedResponse
 )
+from jailbreaks.benchmarks import Benchmark
+from jailbreaks.methods import JailBreakMethod
 
 logger = logging.getLogger(__name__)
 
-def generate(pipeline: JailbreakPipeline):
+@dataclass
+class GenerateConfig:
+    project_name: str
+    run_id: str
+    model_paths: List[str]
+    method_combinations: List[List[JailBreakMethod]]
+    benchmarks: List[Benchmark]
+    batch_size: int
+
+
+def generate(config: GenerateConfig):
     logger.info("Step 2: Generating responses")
-    run_name = f"responses_{pipeline.run_id}"
+    run_name = f"responses_{config.run_id}"
     
     wandb.init(
-        project=pipeline.project_name, 
+        project=config.project_name, 
         name=run_name, 
         id=run_name, 
         config={
-            "model_paths": pipeline.model_paths,
-            "method_combinations": pipeline.method_combinations,
-            "benchmarks": pipeline.benchmarks,
-            "run_id": pipeline.run_id
+            "model_paths": config.model_paths,
+            "method_combinations": config.method_combinations,
+            "benchmarks": config.benchmarks,
+            "run_id": config.run_id
         }
     )
     logger.info(f"W&B experiment initialized: {run_name}")
     generation_start_time = time.time()
-    _generate_responses_internal(pipeline)
+    _generate_responses_internal(config)
     total_generation_time = time.time() - generation_start_time
     logger.info(f"Response generation completed in {total_generation_time:.2f}s")
     wandb.finish()
 
-def _generate_responses_internal(pipeline: JailbreakPipeline):
+def _generate_responses_internal(config: GenerateConfig):
     
     # Track overall generation metrics
     overall_metrics = {
-        "total_models": len(pipeline.model_paths),
-        "total_method_combos": len(pipeline.method_combinations),
-        "total_benchmarks": len(pipeline.benchmarks),
+        "total_models": len(config.model_paths),
+        "total_method_combos": len(config.method_combinations),
+        "total_benchmarks": len(config.benchmarks),
     }
     wandb.config.update(overall_metrics)
-            
+
+    method_model_times = {}
+    generated_responses = {}
     
     # Initialize method_model_times structure
-    for benchmark in pipeline.benchmarks:
+    for benchmark in config.benchmarks:
         benchmark_name = benchmark.__str__()
         benchmark_key = benchmark_name.lower().replace(" ", "_")
         
-        if benchmark_key not in pipeline.method_model_times:
-            pipeline.method_model_times[benchmark_key] = {}
+        if benchmark_key not in method_model_times:
+            method_model_times[benchmark_key] = {}
         
-        for model_path in pipeline.model_paths:
+        for model_path in config.model_paths:
             model_short_name = model_path.split("/")[-1]
             
-            if model_short_name not in pipeline.method_model_times[benchmark_key]:
-                pipeline.method_model_times[benchmark_key][model_short_name] = {}
+            if model_short_name not in method_model_times[benchmark_key]:
+                method_model_times[benchmark_key][model_short_name] = {}
             
-            for method_combo in pipeline.method_combinations:
+            for method_combo in config.method_combinations:
                 if not method_combo:
                     combo_name = "baseline"
                 else:
                     combo_name = "_".join(method.__str__().lower() for method in method_combo)
                 
-                if combo_name not in pipeline.method_model_times[benchmark_key][model_short_name]:
-                    pipeline.method_model_times[benchmark_key][model_short_name][combo_name] = {
+                if combo_name not in method_model_times[benchmark_key][model_short_name]:
+                    method_model_times[benchmark_key][model_short_name][combo_name] = {
                         'total_time': 0,
                         'avg_gen_time': 0,
                         'num_samples': 0,
                         'batch_times': []
                     }
     
-    for benchmark in pipeline.benchmarks:
+    for benchmark in config.benchmarks:
         benchmark_name = benchmark.__str__()
         benchmark_key = benchmark_name.lower().replace(" ", "_")
         
         logger.info(f"Generating responses for benchmark: {benchmark_name}")
-        pipeline.generated_responses[benchmark_key] = {}
+        generated_responses[benchmark_key] = {}
         
-        for model_path in pipeline.model_paths:
+        for model_path in config.model_paths:
             model_short_name = model_path.split("/")[-1]
             logger.info(f"  Using model: {model_short_name}")
             
-            for method_combo in pipeline.method_combinations:
+            for method_combo in config.method_combinations:
                 if not method_combo:
                     combo_name = "baseline"
-                    method_configs = [{"name": "baseline"}]
                 else:
                     combo_name = "_".join(method.__str__().lower() for method in method_combo)
-                    method_configs = [pipeline._get_method_config(method) for method in method_combo]
                 
                 combo_key = combo_name.lower().replace(" ", "_")
                 logger.info(f"    Generating with method combo: {combo_name}")
@@ -106,7 +119,7 @@ def _generate_responses_internal(pipeline: JailbreakPipeline):
                 # Get prompts from benchmark
                 prompts = benchmark.get_prompts()
 
-                batch_size = pipeline.batch_size
+                batch_size = config.batch_size
                 for batch_idx, batch_start in enumerate(tqdm(range(0, len(prompts), batch_size), desc=f"{model_short_name}_{combo_name}")):
                     batch_end = min(batch_start + batch_size, len(prompts))
                     batch_prompts = prompts[batch_start:batch_end]
@@ -123,7 +136,7 @@ def _generate_responses_internal(pipeline: JailbreakPipeline):
                         per_sample_time = batch_gen_time / len(batch_prompts)
                         
                         # Track timing for this batch
-                        pipeline.method_model_times[benchmark_key][model_short_name][combo_name]['batch_times'].append({
+                        method_model_times[benchmark_key][model_short_name][combo_name]['batch_times'].append({
                             'batch_idx': batch_idx,
                             'batch_size': len(batch_prompts),
                             'total_time': batch_gen_time,
@@ -158,7 +171,7 @@ def _generate_responses_internal(pipeline: JailbreakPipeline):
                 num_samples = len(responses)
                 avg_gen_time = total_generation_time / max(num_samples, 1)
                 
-                pipeline.method_model_times[benchmark_key][model_short_name][combo_name].update({
+                method_model_times[benchmark_key][model_short_name][combo_name].update({
                     'total_time': total_generation_time,
                     'avg_gen_time': avg_gen_time,
                     'num_samples': num_samples
@@ -186,14 +199,14 @@ def _generate_responses_internal(pipeline: JailbreakPipeline):
                     "gen_time": [resp.metadata["gen_time"] for resp in responses]
                 })
                     
-                artifact_name = f"{benchmark_key}_{model_short_name}_{combo_key}_responses-{pipeline.run_id}"
+                artifact_name = f"{benchmark_key}_{model_short_name}_{combo_key}_responses-{config.run_id}"
                 
                 # log table for visibility in wandb
                 response_table = wandb.Table(dataframe=response_df)
                 wandb.log({artifact_name: response_table})
                 
                 # add file for download
-                path = f"{benchmark_key}/{model_short_name}/{combo_key}/responses-{pipeline.run_id}.csv"
+                path = f"{benchmark_key}/{model_short_name}/{combo_key}/responses-{config.run_id}.csv"
 
                 # could also just have them locally, without temp file
                 csv_path = Path("tmp_responses") / path

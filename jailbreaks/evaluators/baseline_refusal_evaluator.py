@@ -1,7 +1,7 @@
 from typing import List
 
 from jailbreaks.evaluators.base import ResponseEvaluator
-from jailbreaks.pipeline.pipeline import GeneratedResponse
+from jailbreaks.pipeline.schemas import GeneratedResponse
 from jailbreaks.utils.refusal import is_refusal
 
 class BaselineRefusalEvaluator(ResponseEvaluator):

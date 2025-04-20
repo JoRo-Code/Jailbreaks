@@ -1,7 +1,7 @@
 from typing import List
 
 from jailbreaks.evaluators.base import ResponseEvaluator
-from jailbreaks.pipeline.pipeline import GeneratedResponse
+from jailbreaks.pipeline.schemas import GeneratedResponse
 from jailbreaks.evaluators.llm_judge.judge import (
     BaseLLMJudge, 
     LLMJudgeVote
