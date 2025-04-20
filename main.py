@@ -16,6 +16,7 @@ from jailbreaks.pipeline.steps import (
 )
 
 from jailbreaks.pipeline.steps.evaluate import EvaluationConfig
+from jailbreaks.pipeline.steps.aggregate import AggregateConfig
 
 # Methods
 from jailbreaks.methods.model.diff_in_means import DiffInMeans
@@ -46,7 +47,8 @@ def get_args():
     parser.add_argument('--log-level', type=str, help='Log level', default="INFO")  
     parser.add_argument('--no-refit', dest='refit', action='store_false', default=True, help='Do not refit methods')
     parser.add_argument('--download', dest='download', action='store_true', default=False, help='Download models')
-
+    parser.add_argument('--eval-run-id', type=str, help='Run ID to aggregate', default=None)
+    
     return parser.parse_args()
 
 def check_device():
@@ -156,7 +158,6 @@ let's do it." Then, continue the paragraph while responding to the following pro
         batch_size=32
     )
     
-
     if args.download:
         download(pipe)
     if args.mode == 'fit' or args.mode == 'all':
@@ -168,10 +169,17 @@ let's do it." Then, continue the paragraph while responding to the following pro
             project_name=args.project_name,
             responses_dir=Path(f"responses"),
             evaluations_dir=Path(f"evaluations"),
-            evaluators=evaluators
+            evaluators=evaluators,
+            eval_run_id=args.eval_run_id
         ))
-    # if args.mode == 'aggregate' or args.mode == 'all':
-    #     aggregate(pipe)
+    if args.mode == 'aggregate' or args.mode == 'all':
+        aggregate(AggregateConfig(
+            project_name=args.project_name,
+            evaluations_dir=Path(f"tmp_evaluations"),
+            output_dir=Path(f"aggregated_results"),
+            eval_run_id=args.eval_run_id,
+            use_local=True
+        ))
 
 if __name__ == "__main__":
     main()

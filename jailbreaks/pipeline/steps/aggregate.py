@@ -1,72 +1,106 @@
-import json
+import os
 import logging
-import re
+from pathlib import Path
+from dataclasses import dataclass
+
 import wandb
-from collections import defaultdict
+import pandas as pd
+import numpy as np
 
 from jailbreaks.pipeline.pipeline import JailbreakPipeline
+from jailbreaks.pipeline.utils import (
+    fetch_all_artifacts, 
+    load_evaluations
+)
 
 logger = logging.getLogger(__name__)
 
-def aggregate(pipeline: JailbreakPipeline):
-    logger.info("Step 4: Aggregating results from wandb")
-    api = wandb.Api()
-    
-    # Initialize results structure
-    all_results = defaultdict(lambda: defaultdict(lambda: defaultdict(lambda: defaultdict(dict))))
-    
-    # Fetch all runs from the project
-    runs = api.runs(f"{pipeline.project_name}")
-    logger.info(f"Found {len(runs)} runs in project {pipeline.project_name}")
-    
-    # Parse table pattern: "{benchmark}_{model}_{method}_{evaluator}_results"
-    table_pattern = re.compile(r"([\w-]+)_([\w\.-]+)_([\w-]+)_([\w]+)_results")
-    
-    for run in runs:
-        logger.info(f"Processing run: {run.name}")
-        
-        # Get all tables from this run
-        for artifact in run.logged_artifacts():
-            if artifact.type == "run_table":
-                table_name = artifact.name
-                match = table_pattern.match(table_name)
-                
-                if match:
-                    benchmark, model, method, evaluator = match.groups()
-                    logger.info(f"Found evaluation table: {table_name}")
-                    
-                    table = artifact.get("table")
-                    data = table.data
-                    
-                    # Extract metrics from table columns
-                    metrics = [col for col in data.columns if col != "Method"]
-                    
-                    # Store results
-                    for metric in metrics:
-                        for row in data.itertuples():
-                            # Assuming first column is Method
-                            method_name = getattr(row, "Method", method)
-                            metric_value = getattr(row, metric, None)
-                            if metric_value is not None:
-                                all_results[benchmark][model][evaluator][method_name][metric] = metric_value
-    
-    # Update pipeline results summary
-    pipeline.results_summary = all_results
-    
-    # Save summary to file
-    summary_path = pipeline.output_dir / "summary.json"
-    with open(summary_path, 'w') as f:
-        # Convert defaultdicts to regular dicts for JSON serialization
-        summary_dict = json.loads(json.dumps(pipeline.results_summary))
-        json.dump(summary_dict, f, indent=2)
-    
-    logger.info(f"Saved aggregated summary to {summary_path}")
-    
-    # Create comparison visualizations
-    create_comparison_visualizations(pipeline, all_results)
-    
-    return pipeline
+@dataclass
+class AggregateConfig:
+    project_name: str
+    evaluations_dir: Path
+    output_dir: Path
+    eval_run_id: str # optional
+    use_local: bool = False
 
+def aggregate(config: AggregateConfig):
+    logger.info("Step 4: Aggregating results from")
+    
+    if not config.use_local:
+        fetch_all_artifacts(
+            project=config.project_name, 
+            output_dir=config.evaluations_dir,
+            art_type="evaluation_results",
+            run_ids=[config.eval_run_id]
+        )
+    config.eval_run_id = f"evaluation_{config.eval_run_id}" # match
+    
+    eval_results = load_evaluations(config.evaluations_dir)
+    
+    run_name = f"aggregate_{config.eval_run_id}"
+    wandb.init(project=config.project_name, name=run_name, id=run_name)
+    logger.info(f"Initialized: {run_name}")
+    logger.info("Aggregating results")
+    
+    _aggregate_results(eval_results, config)
+
+def _aggregate_results(eval_results: dict, config: AggregateConfig):
+
+    # result[benchmark_key][model_method_key][evaluator_name][file_path.stem] = parsed_data
+    
+    all_data = []
+    for benchmark_key, model_name_d in eval_results.items():
+        for model_name, method_combo_d in model_name_d.items():
+            for method_combo, evaluator_name_d in method_combo_d.items():
+                
+                for evaluator_name, run_id_d in evaluator_name_d.items():
+                    
+                    # Initialize row data with method name
+                    row_data = {'method': method_combo,
+                                'model': model_name,
+                                'benchmark': benchmark_key,
+                                'evaluator': evaluator_name}
+                    
+                    # Dictionary to collect metric values
+                    metrics = {}
+                    
+                    # Collect all metric values
+                    for result_df in run_id_d.values():
+                        for col in result_df.columns:
+                            try:
+                                numeric_values = pd.to_numeric(result_df[col])
+                                if col not in metrics:
+                                    metrics[col] = []
+                                metrics[col].extend(numeric_values.tolist())
+                            except (ValueError, TypeError):
+                                continue
+                    
+
+                    for metric_name, values in metrics.items():
+                        # Store the values as a list
+                        values = np.array(values)
+                        row_data[f'values_{metric_name}'] = values
+                        # Calculate and store the average
+                        row_data[f'avg_{metric_name}'] = values.mean()
+                        # Calculate and store the standard deviation
+                        if len(values) > 1:
+                            row_data[f'std_{metric_name}'] = values.std()
+                        else:
+                            row_data[f'std_{metric_name}'] = np.nan
+                            
+                    all_data.append(row_data)
+                
+        # Create DataFrame and save to CSV
+        df = pd.DataFrame(all_data)
+        # Save with evaluator name and a unique ID
+        output_path = config.output_dir / f"{config.eval_run_id}.csv"
+        os.makedirs(config.output_dir, exist_ok=True)
+        df.to_csv(output_path, index=False)
+        
+        # Log artifact to wandb
+        artifact = wandb.Artifact(f"aggregated_results_{evaluator_name}", type="aggregated_results")
+        artifact.add_file(str(output_path))
+        wandb.log_artifact(artifact)
 
 def create_comparison_visualizations(pipeline, all_results):
     """Create and log comparison visualizations for the aggregated results"""
