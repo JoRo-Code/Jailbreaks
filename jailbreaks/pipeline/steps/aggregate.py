@@ -25,6 +25,8 @@ class AggregateConfig:
 def aggregate(config: AggregateConfig):
     logger.info("Step 4: Aggregating results from")
     
+    config.eval_run_id = f"evaluation_{config.eval_run_id}" # match
+    
     if not config.use_local:
         fetch_all_artifacts(
             project=config.project_name, 
@@ -32,7 +34,6 @@ def aggregate(config: AggregateConfig):
             art_type="evaluation_results",
             run_ids=[config.eval_run_id]
         )
-    config.eval_run_id = f"evaluation_{config.eval_run_id}" # match
     
     eval_results = load_evaluations(config.evaluations_dir)
     
@@ -70,7 +71,7 @@ def _aggregate_results(eval_results: dict, config: AggregateConfig):
                                 numeric_values = pd.to_numeric(result_df[col])
                                 if col not in metrics:
                                     metrics[col] = []
-                                metrics[col].extend(numeric_values.tolist())
+                                metrics[col].append(numeric_values.mean())
                             except (ValueError, TypeError):
                                 continue
                     
