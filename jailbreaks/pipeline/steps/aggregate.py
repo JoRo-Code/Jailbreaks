@@ -1,31 +1,107 @@
 import json
 import logging
+import re
 import wandb
+from collections import defaultdict
 
 from jailbreaks.pipeline.pipeline import JailbreakPipeline
 
 logger = logging.getLogger(__name__)
 
 def aggregate(pipeline: JailbreakPipeline):
-    logger.info("Step 4: Aggregating results")
-    pipeline.load_responses(pipeline.responses_dir)
-    pipeline.load_evaluation_results()
-    if not hasattr(pipeline, 'evaluation_results'):
-        logger.warning("No evaluation results found. Skipping comparison tables.")
-        return
+    logger.info("Step 4: Aggregating results from wandb")
+    api = wandb.Api()
     
-    for evaluator_name, benchmarks in pipeline.evaluation_results.items():
-        for benchmark_key, models in benchmarks.items():
-            for model_name, method_results in models.items():
-                pipeline = create_evaluation_table(pipeline, model_name, benchmark_key, evaluator_name, method_results)
+    # Initialize results structure
+    all_results = defaultdict(lambda: defaultdict(lambda: defaultdict(lambda: defaultdict(dict))))
     
+    # Fetch all runs from the project
+    runs = api.runs(f"{pipeline.project_name}")
+    logger.info(f"Found {len(runs)} runs in project {pipeline.project_name}")
+    
+    # Parse table pattern: "{benchmark}_{model}_{method}_{evaluator}_results"
+    table_pattern = re.compile(r"([\w-]+)_([\w\.-]+)_([\w-]+)_([\w]+)_results")
+    
+    for run in runs:
+        logger.info(f"Processing run: {run.name}")
+        
+        # Get all tables from this run
+        for artifact in run.logged_artifacts():
+            if artifact.type == "run_table":
+                table_name = artifact.name
+                match = table_pattern.match(table_name)
+                
+                if match:
+                    benchmark, model, method, evaluator = match.groups()
+                    logger.info(f"Found evaluation table: {table_name}")
+                    
+                    table = artifact.get("table")
+                    data = table.data
+                    
+                    # Extract metrics from table columns
+                    metrics = [col for col in data.columns if col != "Method"]
+                    
+                    # Store results
+                    for metric in metrics:
+                        for row in data.itertuples():
+                            # Assuming first column is Method
+                            method_name = getattr(row, "Method", method)
+                            metric_value = getattr(row, metric, None)
+                            if metric_value is not None:
+                                all_results[benchmark][model][evaluator][method_name][metric] = metric_value
+    
+    # Update pipeline results summary
+    pipeline.results_summary = all_results
+    
+    # Save summary to file
     summary_path = pipeline.output_dir / "summary.json"
     with open(summary_path, 'w') as f:
-        json.dump(pipeline.results_summary, f, indent=2)
+        # Convert defaultdicts to regular dicts for JSON serialization
+        summary_dict = json.loads(json.dumps(pipeline.results_summary))
+        json.dump(summary_dict, f, indent=2)
     
-    logger.info(f"Saved summary to {summary_path}")
+    logger.info(f"Saved aggregated summary to {summary_path}")
+    
+    # Create comparison visualizations
+    create_comparison_visualizations(pipeline, all_results)
     
     return pipeline
+
+
+def create_comparison_visualizations(pipeline, all_results):
+    """Create and log comparison visualizations for the aggregated results"""
+    run_name = f"aggregated_results_{pipeline.run_id}"
+    wandb.init(project=pipeline.project_name, name=run_name, id=run_name)
+    
+    # For each benchmark, model, evaluator combination
+    for benchmark, models in all_results.items():
+        for model, evaluators in models.items():
+            for evaluator, methods in evaluators.items():
+                # Get all metrics used by this evaluator
+                all_metrics = set()
+                for method_data in methods.values():
+                    all_metrics.update(method_data.keys())
+                
+                # Create a table for each metric
+                for metric in all_metrics:
+                    table_data = wandb.Table(columns=["Method", metric])
+                    
+                    for method, metrics in methods.items():
+                        if metric in metrics:
+                            table_data.add_data(method, metrics[metric])
+                    
+                    # Log bar chart
+                    wandb.log({
+                        f"{benchmark}_{model}_{evaluator}_{metric}_chart": 
+                        wandb.plot.bar(
+                            table_data,
+                            "Method",
+                            metric,
+                            title=f"{benchmark}-{model}-{evaluator}-{metric}"
+                        )
+                    })
+    
+    wandb.finish()
 
 
 def create_evaluation_table(pipeline: JailbreakPipeline, model_name, benchmark_key, evaluator_name, method_results):
