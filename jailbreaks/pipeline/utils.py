@@ -8,7 +8,7 @@ from pathlib import Path
 import pandas as pd
 import wandb
 
-from jailbreaks.pipeline.pipeline import (
+from jailbreaks.pipeline.schemas import (
     EvaluationResult,
     GeneratedResponse
 )

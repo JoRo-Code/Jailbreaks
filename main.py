@@ -6,7 +6,6 @@ import wandb
 import torch
 
 # Pipeline
-from jailbreaks.pipeline.pipeline import JailbreakPipeline
 from jailbreaks.pipeline.steps import (
     fit, 
     generate, 
@@ -14,9 +13,12 @@ from jailbreaks.pipeline.steps import (
     aggregate, 
     download
 )
-
-from jailbreaks.pipeline.steps.evaluate import EvaluationConfig
-from jailbreaks.pipeline.steps.aggregate import AggregateConfig
+from jailbreaks.pipeline.steps import (
+    FitConfig,
+    GenerateConfig,
+    EvaluationConfig,
+    AggregateConfig
+)
 
 # Methods
 from jailbreaks.methods.model.diff_in_means import DiffInMeans
@@ -149,24 +151,23 @@ let's do it." Then, continue the paragraph while responding to the following pro
     evaluations_dir = output_dir / "evaluations"
     aggregated_results_dir = output_dir / "aggregated_results"
     
-    pipe = JailbreakPipeline(
-        project_name=args.project_name,
-        model_paths=model_paths, 
-        method_combinations=method_combinations, 
-        benchmarks=[benchmark],
-        evaluators=evaluators,
-        device=device,
-        output_dir=output_dir,
-        run_id=args.run_id,
-        batch_size=32
-    )
-    
     if args.download:
-        download(pipe)
+        download(model_paths)
     if args.mode == 'fit' or args.mode == 'all':
-        fit(pipe, refit=args.refit)
+        fit(FitConfig(
+            method_combinations=method_combinations,
+            model_paths=model_paths,
+            refit=args.refit
+        ))
     if args.mode == 'generate' or args.mode == 'all':
-        generate(pipe)
+        generate(GenerateConfig(
+            project_name=args.project_name,
+            run_id=args.run_id,
+            model_paths=model_paths,
+            method_combinations=method_combinations,
+            benchmarks=[benchmark],
+            batch_size=32
+        ))
     if args.mode == 'evaluate' or args.mode == 'all':
         evaluate(EvaluationConfig(
             project_name=args.project_name,

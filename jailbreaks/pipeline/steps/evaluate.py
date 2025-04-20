@@ -10,7 +10,7 @@ from typing import List
 import wandb
 import pandas as pd
 
-from jailbreaks.pipeline.pipeline import (
+from jailbreaks.pipeline.schemas import (
     EvaluationResult,
     GeneratedResponse
 )
