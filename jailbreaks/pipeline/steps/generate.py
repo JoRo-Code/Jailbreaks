@@ -4,6 +4,7 @@ import time
 from pathlib import Path
 from dataclasses import dataclass
 from typing import List
+import uuid
 
 import pandas as pd
 import wandb
@@ -29,8 +30,9 @@ class GenerateConfig:
 
 
 def generate(config: GenerateConfig):
+    run_id = str(uuid.uuid4())[:8] if config.run_id is None else config.run_id
     logger.info("Step 2: Generating responses")
-    run_name = f"responses_{config.run_id}"
+    run_name = f"responses_{run_id}"
     
     wandb.init(
         project=config.project_name, 
