@@ -1,7 +1,7 @@
 import os
 import logging
 import time
-import json
+from pathlib import Path
 
 import pandas as pd
 import wandb
@@ -19,7 +19,17 @@ def generate(pipeline: JailbreakPipeline):
     logger.info("Step 2: Generating responses")
     run_name = f"responses_{pipeline.run_id}"
     
-    wandb.init(project=pipeline.project_name, name=run_name, id=run_name)
+    wandb.init(
+        project=pipeline.project_name, 
+        name=run_name, 
+        id=run_name, 
+        config={
+            "model_paths": pipeline.model_paths,
+            "method_combinations": pipeline.method_combinations,
+            "benchmarks": pipeline.benchmarks,
+            "run_id": pipeline.run_id
+        }
+    )
     logger.info(f"W&B experiment initialized: {run_name}")
     generation_start_time = time.time()
     _generate_responses_internal(pipeline)
@@ -36,6 +46,7 @@ def _generate_responses_internal(pipeline: JailbreakPipeline):
         "total_benchmarks": len(pipeline.benchmarks),
     }
     wandb.config.update(overall_metrics)
+            
     
     # Initialize method_model_times structure
     for benchmark in pipeline.benchmarks:
@@ -178,14 +189,6 @@ def _generate_responses_internal(pipeline: JailbreakPipeline):
                     "method_combo": [combo_name for _ in responses],
                     "gen_time": [resp.metadata["gen_time"] for resp in responses]
                 })
-                
-                output_path = pipeline.responses_dir / f"responses_{benchmark_key}_{model_short_name}_{combo_key}"
-    
-                with open(output_path + ".json", 'w') as f:
-                    json.dump([r.to_dict() for r in responses], f, indent=2)
-                csv_file = output_path + ".csv"
-                response_df.to_csv(csv_file, index=False)
-                logger.info(f"Saved responses to {output_path}")
                     
                 artifact_name = f"{benchmark_key}_{model_short_name}_{combo_key}_responses-{pipeline.run_id}"
                 
@@ -194,9 +197,11 @@ def _generate_responses_internal(pipeline: JailbreakPipeline):
                 wandb.log({artifact_name: response_table})
                 
                 # add file for download
-                csv_path = "tmp_responses.csv"
-                response_df.to_csv(csv_path, index=False)
                 path = f"{benchmark_key}/{model_short_name}/{combo_key}/responses-{pipeline.run_id}.csv"
+
+                csv_path = Path("tmp_responses") / path
+                os.makedirs(csv_path.parent, exist_ok=True)
+                response_df.to_csv(csv_path, index=False)
 
                 artifact = wandb.Artifact(name=artifact_name, type="responses")
                 artifact.add_file(csv_path, name=path)
