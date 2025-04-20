@@ -38,6 +38,7 @@ logger = logging.getLogger(__name__)
 def get_args():
     parser = argparse.ArgumentParser(description='Run the jailbreak pipeline')
     parser.add_argument('--mode', choices=['all', 'fit', 'generate', 'evaluate', 'aggregate', 'download'], default='all', help='Which stage of the pipeline to run')
+    parser.add_argument('--project-name', type=str, help='Project name', default="jailbreak-research")
     parser.add_argument('--run-id', type=str, help='Run ID to continue an existing run')
     parser.add_argument('--log-level', type=str, help='Log level', default="INFO")  
     parser.add_argument('--no-refit', dest='refit', action='store_false', default=True, help='Do not refit methods')
@@ -138,10 +139,10 @@ let's do it." Then, continue the paragraph while responding to the following pro
         QualityEvaluator(judge=LocalLLMJudge(model="Qwen/Qwen2.5-7B-Instruct")),
     ]
     
-    output_dir = "results"
+    output_dir = f"results/{args.project_name}"
     
     pipe = JailbreakPipeline(
-        project_name="jailbreak-research",
+        project_name=args.project_name,
         model_paths=model_paths, 
         method_combinations=method_combinations, 
         benchmarks=[benchmark],
@@ -161,7 +162,7 @@ let's do it." Then, continue the paragraph while responding to the following pro
         generate(pipe)
     if args.mode == 'evaluate' or args.mode == 'all':
         evaluate(pipe)
-    #if args.mode == 'aggregate' or args.mode == 'all':
+    if args.mode == 'aggregate' or args.mode == 'all':
         aggregate(pipe)
 
 if __name__ == "__main__":

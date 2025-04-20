@@ -1,3 +1,4 @@
+import os
 import logging
 import time
 import json
@@ -169,7 +170,6 @@ def _generate_responses_internal(pipeline: JailbreakPipeline):
                 })
                 
                 # Save responses
-
                 response_df = pd.DataFrame({
                     "prompt": [resp.prompt for resp in responses],
                     "raw_prompt": [resp.raw_prompt for resp in responses],
@@ -179,25 +179,31 @@ def _generate_responses_internal(pipeline: JailbreakPipeline):
                     "gen_time": [resp.metadata["gen_time"] for resp in responses]
                 })
                 
-                output_path = pipeline.responses_dir / f"responses_{benchmark_key}_{model_short_name}_{combo_key}.json"
+                output_path = pipeline.responses_dir / f"responses_{benchmark_key}_{model_short_name}_{combo_key}"
     
-                with open(output_path, 'w') as f:
+                with open(output_path + ".json", 'w') as f:
                     json.dump([r.to_dict() for r in responses], f, indent=2)
-                csv_file = pipeline.responses_dir / f"responses_{benchmark_key}_{model_short_name}_{combo_key}.csv"
+                csv_file = output_path + ".csv"
                 response_df.to_csv(csv_file, index=False)
                 logger.info(f"Saved responses to {output_path}")
                     
+                artifact_name = f"{benchmark_key}_{model_short_name}_{combo_key}_responses-{pipeline.run_id}"
                 
+                # log table for visibility in wandb
                 response_table = wandb.Table(dataframe=response_df)
-                wandb.log({f"{benchmark_key}_{model_short_name}_{combo_key}_responses": response_table})
+                wandb.log({artifact_name: response_table})
                 
-                # response_table_artifact = wandb.Artifact(f"{benchmark_key}_{model_short_name}_{combo_key}_responses", type="dataset")
-                # response_table_artifact.add(response_table, "response_table")
+                # add file for download
+                csv_path = "tmp_responses.csv"
+                response_df.to_csv(csv_path, index=False)
+                path = f"{benchmark_key}/{model_short_name}/{combo_key}/responses-{pipeline.run_id}.csv"
 
-                # response_table_artifact.add_file(csv_file)
-                # response_table_artifact.save()
+                artifact = wandb.Artifact(name=artifact_name, type="responses")
+                artifact.add_file(csv_path, name=path)
+                
+                os.remove(csv_path)
 
-                # wandb.log_artifact(response_table_artifact)
+                wandb.log_artifact(artifact) # TODO: check if need to use run - run.log_artifact(artifact)
 
                 
     
