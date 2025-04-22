@@ -155,6 +155,7 @@ def _generate_responses_internal(config: GenerateConfig):
                             response=batched_responses[i],
                             model_id=model_path,
                             method_combo=combo_name,
+                            gen_time=per_sample_time,
                             metadata={
                                 "benchmark": benchmark_name,
                                 "prompt_index": i,

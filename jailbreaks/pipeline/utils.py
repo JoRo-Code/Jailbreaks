@@ -17,19 +17,29 @@ from jailbreaks.pipeline.schemas import (
 
 logger = logging.getLogger(__name__)
 
-# GPU tracking
-pynvml.nvmlInit()
-handle = pynvml.nvmlDeviceGetHandleByIndex(0)
-
 def log_gpu_to_wandb():
-    util = pynvml.nvmlDeviceGetUtilizationRates(handle)
-    mem = pynvml.nvmlDeviceGetMemoryInfo(handle)
+    try:
+        handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+        util = pynvml.nvmlDeviceGetUtilizationRates(handle)
+        mem = pynvml.nvmlDeviceGetMemoryInfo(handle)
 
-    wandb.log({
-        "GPU Utilization (%)": util.gpu,
-        "GPU Memory Used (MB)": mem.used / 1024**2,
-        "GPU Memory Total (MB)": mem.total / 1024**2
-    })
+        wandb.log({
+            "GPU Utilization (%)": util.gpu,
+            "GPU Memory Used (MB)": mem.used / 1024**2,
+            "GPU Memory Total (MB)": mem.total / 1024**2
+        })
+    except pynvml.NVMLError_NotSupported:
+        # Log memory only, or skip
+        try:
+            mem = pynvml.nvmlDeviceGetMemoryInfo(handle)
+            wandb.log({
+                "GPU Memory Used (MB)": mem.used / 1024**2,
+                "GPU Memory Total (MB)": mem.total / 1024**2
+            })
+        except Exception as e:
+            print("Could not log GPU memory either:", e)
+    except Exception as e:
+        print("Unexpected NVML error:", e)
 
 
 @dataclass
