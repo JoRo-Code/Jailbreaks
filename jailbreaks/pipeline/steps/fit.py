@@ -13,15 +13,14 @@ logger = logging.getLogger(__name__)
 class FitConfig:
     method_combinations: List[List[JailBreakMethod]]
     model_paths: List[str]
-    refit: bool = True
     project_name: str
     run_name: str
     log_dir: str
+    refit: bool = True
 
 def fit(config: FitConfig):
-    if not config.run_name:
-        config.run_name = f"fit_{time.strftime('%Y%m%d_%H%M%S')}"
-    wandb.init(project=config.project_name, name=config.run_name, id=config.run_name)
+    run_name = f"fit_{time.strftime('%Y%m%d_%H%M%S')}"
+    wandb.init(project=config.project_name, name=run_name, id=run_name)
     logger.info("Step 1: Fitting methods")
     
     fit_times = {}
@@ -57,4 +56,6 @@ def fit(config: FitConfig):
         f.write("model_path,method_name,time\n")
         for (model_path, method_name), time in fit_times.items():
             f.write(f"{model_path},{method_name},{time}\n")
+
+
     

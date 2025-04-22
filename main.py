@@ -169,7 +169,8 @@ let's do it." Then, continue the paragraph while responding to the following pro
             method_combinations=method_combinations,
             model_paths=model_paths,
             refit=args.refit,
-            log_dir=log_dir
+            log_dir=log_dir,
+            project_name=args.project_name,
         ))
     if args.mode == 'generate' or args.mode == 'all':
         generate(GenerateConfig(
