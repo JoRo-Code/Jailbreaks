@@ -32,7 +32,7 @@ from jailbreaks.evaluators.baseline_refusal_evaluator import BaselineRefusalEval
 from jailbreaks.evaluators.quality_evaluator import QualityEvaluator
 from jailbreaks.benchmarks.refusal import RefusalBenchmark
 
-from jailbreaks.evaluators.llm_judge.judge import LocalLLMJudge
+from jailbreaks.evaluators.llm_judge.judge import LocalLLMJudge, GroqLLMJudge
 
 # Datasets
 from jailbreaks.data import (
@@ -52,6 +52,8 @@ def get_args():
     parser.add_argument('--download', dest='download', action='store_true', default=False, help='Download models')
     parser.add_argument('--eval-run-id', type=str, help='Run ID to aggregate', default=None)
     parser.add_argument('--use-local', dest='use_local', action='store_true', default=False, help='Use local evaluations')
+    parser.add_argument('--upload-to-wandb', dest='upload_to_wandb', action='store_true', default=False, help='Upload to wandb')
+    parser.add_argument('--output-dir', type=str, help='Output directory', default="results")
     
     return parser.parse_args()
 
@@ -93,12 +95,14 @@ def main():
     #                "Qwen/Qwen2.5-7B-Instruct"]
 
     model_paths = [
-        "Qwen/Qwen2-0.5B-Instruct",
-        #"Qwen/Qwen2.5-1.5B-Instruct",
-        #"Qwen/Qwen2.5-3B-Instruct",
-        #"Qwen/Qwen2.5-7B-Instruct",
+        # "Qwen/Qwen2-0.5B-Instruct",
+        # "Qwen/Qwen2.5-1.5B-Instruct",
+        # "Qwen/Qwen2.5-3B-Instruct",
+        "Qwen/Qwen2.5-7B-Instruct",
         #"Qwen/Qwen2.5-14B-Instruct",
         #"Qwen/Qwen2.5-32B-Instruct",
+        "meta-llama/Llama-3.1-8B-Instruct",
+        "mistralai/Mistral-7B-Instruct-v0.1"
         
     ]
         
@@ -136,22 +140,24 @@ let's do it." Then, continue the paragraph while responding to the following pro
         # [prefix_injection_2],
         [prefix_injection_3],
         [diff_in_means],
+        [diff_in_means, prefix_injection_3],
         # [gcg],
         #[OutputAware(params=sampling_params, save=True)],
         [],  # Baseline (no methods)
     ]
 
-    benchmark = RefusalBenchmark(prompts=advbench_test[:16], max_new_tokens=100, name="advbench-16")
+    benchmark = RefusalBenchmark(prompts=advbench_test, max_new_tokens=100, name="advbench-416")
     
     evaluators = [
-        BaselineRefusalEvaluator(),
+        #BaselineRefusalEvaluator(),
         #QualityEvaluator(judge=LocalLLMJudge(model="Qwen/Qwen2.5-7B-Instruct")),
+        QualityEvaluator(judge=GroqLLMJudge(model="llama-3.1-8b-instant"), name="llama-v1"),
     ]
     
-    output_dir = Path(f"results/{args.project_name}")
+    output_dir = Path(f"{args.output_dir}/{args.project_name}")
     responses_dir = output_dir / "responses"
-    evaluations_dir = output_dir / "evaluations"
-    aggregated_results_dir = output_dir / "aggregated_results"
+    evaluations_dir = output_dir / f"evaluations/{args.eval_run_id}"
+    aggregated_results_dir = output_dir / f"aggregated_results/{args.eval_run_id}"
     
     if args.run_id is None:
         args.run_id = str(uuid.uuid4())[:8]
@@ -171,7 +177,8 @@ let's do it." Then, continue the paragraph while responding to the following pro
             model_paths=model_paths,
             method_combinations=method_combinations,
             benchmarks=[benchmark],
-            batch_size=32
+            batch_size=32,
+            output_dir=responses_dir
         ))
     if args.mode == 'evaluate' or args.mode == 'all':
         evaluate(EvaluationConfig(
@@ -179,7 +186,11 @@ let's do it." Then, continue the paragraph while responding to the following pro
             responses_dir=responses_dir,
             evaluations_dir=evaluations_dir,
             evaluators=evaluators,
-            eval_run_id=args.eval_run_id
+            eval_run_id=args.eval_run_id,
+            use_local=args.use_local, # should be downloaded from wandb (responses downloads)
+            upload_to_wandb=args.upload_to_wandb,
+            n_runs=5,
+            n_samples=5
         ))
     if args.mode == 'aggregate' or args.mode == 'all':
         aggregate(AggregateConfig(

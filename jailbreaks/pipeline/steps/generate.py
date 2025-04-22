@@ -27,7 +27,8 @@ class GenerateConfig:
     method_combinations: List[List[JailBreakMethod]]
     benchmarks: List[Benchmark]
     batch_size: int
-
+    output_dir: Path = Path("tmp_responses")
+    
 
 def generate(config: GenerateConfig):
     run_id = str(uuid.uuid4())[:8] if config.run_id is None else config.run_id
@@ -211,15 +212,13 @@ def _generate_responses_internal(config: GenerateConfig):
                 path = f"{benchmark_key}/{model_short_name}/{combo_key}/responses-{config.run_id}.csv"
 
                 # could also just have them locally, without temp file
-                csv_path = Path("tmp_responses") / path
+                csv_path = config.output_dir / path
                 os.makedirs(csv_path.parent, exist_ok=True)
                 response_df.to_csv(csv_path, index=False)
 
                 artifact = wandb.Artifact(name=artifact_name, type="responses")
                 artifact.add_file(csv_path, name=path)
                 
-                os.remove(csv_path)
-
                 wandb.log_artifact(artifact)
 
                 
