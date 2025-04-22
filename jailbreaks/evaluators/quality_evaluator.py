@@ -8,7 +8,8 @@ from jailbreaks.evaluators.llm_judge.judge import (
 )
 
 class QualityEvaluator(ResponseEvaluator):
-    def __init__(self, judge:BaseLLMJudge):
+    def __init__(self, judge:BaseLLMJudge, name:str=None):
+        super().__init__(name=name or "QualityEvaluator")
         self.judge = judge
     
     def evaluate(self, responses: List[GeneratedResponse]):
@@ -37,7 +38,8 @@ class QualityEvaluator(ResponseEvaluator):
             for key in vote_keys:
                 if hasattr(vote, key) and getattr(vote, key) is None:
                     null_counts[f'{key}_null'] += 1
-                metrics[key] = metrics.get(key, 0) + getattr(vote, key)
+                if hasattr(vote, key) and getattr(vote, key) is not None:
+                    metrics[key] = metrics.get(key, 0) + getattr(vote, key)
         
         for key in vote_keys:
             metrics[key] = metrics.get(key, 0)

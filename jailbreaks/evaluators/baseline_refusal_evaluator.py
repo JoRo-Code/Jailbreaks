@@ -6,8 +6,8 @@ from jailbreaks.utils.refusal import is_refusal
 
 class BaselineRefusalEvaluator(ResponseEvaluator):
     
-    def __init__(self):
-        pass
+    def __init__(self, name:str=None):
+        super().__init__(name=name or "BaselineRefusalEvaluator")
     
     def evaluate(self, responses: List[GeneratedResponse]):
         metrics = {}

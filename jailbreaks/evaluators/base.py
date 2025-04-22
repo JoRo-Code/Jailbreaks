@@ -4,8 +4,11 @@ from jailbreaks.pipeline.schemas import GeneratedResponse
 
 class ResponseEvaluator:
     
+    def __init__(self, name:str):
+        self.name = name
+    
     def __str__(self):
-        return self.__class__.__name__
+        return self.name
     
     def evaluate(self, responses: List[GeneratedResponse]):
         """
