@@ -16,6 +16,19 @@ from jailbreaks.pipeline.schemas import (
 
 logger = logging.getLogger(__name__)
 
+def log_gpu_to_wandb():
+    import pynvml
+    handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+    util = pynvml.nvmlDeviceGetUtilizationRates(handle)
+    mem = pynvml.nvmlDeviceGetMemoryInfo(handle)
+
+    wandb.log({
+        "GPU Utilization (%)": util.gpu,
+        "GPU Memory Used (MB)": mem.used / 1024**2,
+        "GPU Memory Total (MB)": mem.total / 1024**2
+    })
+
+
 @dataclass
 class FetchFilter:
     run_ids: list[str] = None

@@ -26,3 +26,5 @@ seaborn
 
 google-genai
 groq
+
+pynvml
