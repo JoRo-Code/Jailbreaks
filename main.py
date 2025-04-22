@@ -149,9 +149,9 @@ let's do it." Then, continue the paragraph while responding to the following pro
     benchmark = RefusalBenchmark(prompts=advbench_test, max_new_tokens=100, name="advbench-416")
     
     evaluators = [
-        #BaselineRefusalEvaluator(),
+        BaselineRefusalEvaluator(name="include-refusal"),
         #QualityEvaluator(judge=LocalLLMJudge(model="Qwen/Qwen2.5-7B-Instruct")),
-        QualityEvaluator(judge=GroqLLMJudge(model="llama-3.1-8b-instant"), name="llama-v1"),
+        #QualityEvaluator(judge=GroqLLMJudge(model="llama-3.1-8b-instant"), name="llama-v1"),
     ]
     
     output_dir = Path(f"{args.output_dir}/{args.project_name}")
@@ -190,7 +190,7 @@ let's do it." Then, continue the paragraph while responding to the following pro
             use_local=args.use_local, # should be downloaded from wandb (responses downloads)
             upload_to_wandb=args.upload_to_wandb,
             n_runs=5,
-            n_samples=5
+            n_samples=None
         ))
     if args.mode == 'aggregate' or args.mode == 'all':
         aggregate(AggregateConfig(

@@ -4,6 +4,7 @@ import pathlib
 import functools
 import concurrent.futures
 from pathlib import Path
+from dataclasses import dataclass
 
 import pandas as pd
 import wandb
@@ -15,31 +16,93 @@ from jailbreaks.pipeline.schemas import (
 
 logger = logging.getLogger(__name__)
 
-def fetch_artifacts(run, output_dir:pathlib.Path, art_type:str):
+@dataclass
+class FetchFilter:
+    run_ids: list[str] = None
+    n_runs: int = None
+    art_type: str = None
+    method_names: list[str] = None
+    model_names: list[str] = None
+    benchmark_names: list[str] = None
+    evaluator_names: list[str] = None
+
+def fetch_artifacts_per_run(run, output_dir:pathlib.Path, fetch_filter: FetchFilter):
+    matched = False
     for art in run.logged_artifacts():
-        if art.type == art_type:
+        should_download = True
+        
+        if fetch_filter.art_type and art.type != fetch_filter.art_type:
+            should_download = False
+        
+        if fetch_filter.model_names:
+            model_match = False
+            for model_name in fetch_filter.model_names:
+                if model_name in art.name:
+                    model_match = True
+                    break
+            if not model_match:
+                should_download = False
+        
+        if fetch_filter.benchmark_names:
+            benchmark_match = False
+            for benchmark_name in fetch_filter.benchmark_names:
+                if benchmark_name in art.name:
+                    benchmark_match = True
+                    break
+            if not benchmark_match:
+                should_download = False
+        
+        if fetch_filter.method_names:
+            method_match = False
+            for method_name in fetch_filter.method_names:
+                if method_name in art.name:
+                    method_match = True
+                    break
+            if not method_match:
+                should_download = False
+        
+        if should_download:
             run_dir = output_dir
             run_dir.mkdir(parents=True, exist_ok=True)
             art.download(root=str(run_dir))
-    return run.name
+    return run.name, matched
 
 def fetch_all_artifacts(
     project:str, 
     output_dir:pathlib.Path, 
-    art_type:str, 
-    run_ids:list[str]=None,
-    threads:int=8
+    fetch_filter: FetchFilter,
+    threads:int=8,
     ):
     runs: wandb.Api.runs = wandb.Api().runs(f"{project}")
-    fetch_arts = functools.partial(fetch_artifacts, output_dir=output_dir, art_type=art_type)
+    fetch_arts = functools.partial(
+        fetch_artifacts_per_run, 
+        output_dir=output_dir, 
+        fetch_filter=fetch_filter
+    )
     logger.info("Fetching artifacts from %s", project)
     
-    if run_ids:
-        runs = [run for run in runs if run.id in run_ids]
+    if fetch_filter.run_ids:
+        runs = [run for run in runs if run.id in fetch_filter.run_ids]
     
+    matched_runs = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=threads) as ex:
-        for finished in ex.map(fetch_arts, runs):
-            logger.info("✓ %s", finished)
+        future_to_run = {ex.submit(fetch_arts, run): run for run in runs}
+        for future in concurrent.futures.as_completed(future_to_run):
+            run_name, matched = future.result()
+            logger.info("✓ %s", run_name)
+            logger.info("  Matched_runs: %s", len(matched_runs))
+            if matched:
+                matched_runs.append(run_name)
+                # Check if we've reached the desired number of runs
+                if fetch_filter.n_runs and len(matched_runs) >= fetch_filter.n_runs:
+                    for pending_future in [f for f in future_to_run if not f.done()]:
+                        pending_future.cancel()
+                    logger.info(f"Reached desired number of runs ({fetch_filter.n_runs}). Stopping.")
+                    break
+    
+    matched_runs_count = len(matched_runs)
+    logger.info(f"Total matched runs: {matched_runs_count}")
+    return matched_runs_count
 
 def load_structured_data(
     root_dir: Path, 
@@ -76,6 +139,8 @@ def load_structured_data(
             
             model_name = model_path.name
             logger.info(f"  Processing model: {model_name}")
+
+            result[benchmark_key][model_name] = {}
             
             for combo_path in model_path.glob("*"):
                 if not combo_path.is_dir():
@@ -85,7 +150,7 @@ def load_structured_data(
                 logger.info(f"    Processing method combo: {method_combo}")
                 
                 model_method_key = f"{model_name}_{method_combo}"
-                result[benchmark_key][model_method_key] = {}
+                result[benchmark_key][model_name][method_combo] = {}
                 
                 # Look for matching files
                 for file_path in combo_path.glob(file_pattern):
@@ -101,10 +166,10 @@ def load_structured_data(
                         
                         if parser_func:
                             parsed_data = parser_func(file_path, context)
-                            result[benchmark_key][model_method_key][file_path.stem] = parsed_data
+                            result[benchmark_key][model_name][method_combo][file_path.stem] = parsed_data
                         else:
                             # Default behavior for CSV files if no parser provided
-                            result[benchmark_key][model_method_key][file_path.stem] = pd.read_csv(file_path)
+                            result[benchmark_key][model_name][method_combo][file_path.stem] = pd.read_csv(file_path)
                             
                     except Exception as e:
                         logger.error(f"Error processing {file_path}: {str(e)}")

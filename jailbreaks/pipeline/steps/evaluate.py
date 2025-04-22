@@ -16,7 +16,8 @@ from jailbreaks.pipeline.schemas import (
 )
 from jailbreaks.pipeline.utils import (
     fetch_all_artifacts, 
-    load_responses
+    load_responses,
+    FetchFilter
 )
 from jailbreaks.evaluators import ResponseEvaluator
 
@@ -29,13 +30,21 @@ class EvaluationConfig:
     evaluations_dir: Path
     evaluators: List[ResponseEvaluator]
     eval_run_id: str # optional
-
+    use_local: bool = False
+    upload_to_wandb: bool = True
+    n_runs: int = None
+    n_samples: int = None
+    
 def evaluate(evaluation_config: EvaluationConfig):
-    fetch_all_artifacts(
-        project=evaluation_config.project_name, 
-        output_dir=evaluation_config.responses_dir, 
-        art_type="responses"
-    )
+    if not evaluation_config.use_local:
+        fetch_all_artifacts(
+            project=evaluation_config.project_name,
+            output_dir=evaluation_config.responses_dir, 
+            fetch_filter=FetchFilter(
+                #run_ids=[evaluation_config.eval_run_id],
+                art_type="responses"
+            )
+        )
 
     generated_responses = load_responses(evaluation_config.responses_dir)
     
@@ -43,14 +52,17 @@ def evaluate(evaluation_config: EvaluationConfig):
     if not eval_id:
         eval_id = str(uuid.uuid4())[:8]
 
-    run_name = f"evaluation_{eval_id}"
-    wandb.init(project=evaluation_config.project_name, name=run_name, id=run_name)
-    logger.info(f"Initialized: {run_name}")
+    if evaluation_config.upload_to_wandb:
+        run_name = f"evaluation_{eval_id}"
+        wandb.init(project=evaluation_config.project_name, name=run_name, id=run_name)
+        logger.info(f"Initialized: {run_name}")
+        
     logger.info("Evaluating responses")
 
     _evaluate_responses_internal(evaluation_config, generated_responses)
 
-    wandb.finish()
+    if evaluation_config.upload_to_wandb:
+        wandb.finish()
 
 def _evaluate_responses_internal(evaluation_config: EvaluationConfig, generated_responses: dict[str, dict[str, dict[str, list[GeneratedResponse]]]]):
     
@@ -82,84 +94,87 @@ def _evaluate_responses_internal(evaluation_config: EvaluationConfig, generated_
             
             logger.info(f"  Evaluating {benchmark_key} responses")
             
-            for model_method_key, runs in model_method_runs.items():
-                parts = model_method_key.split('_')
-                method_combo = parts[-1]
-                model_name = '_'.join(parts[:-1])
+            for model_name, method_runs in model_method_runs.items():
+                for method_combo, runs in method_runs.items():
+                                
+                    if model_name not in evaluation_results[evaluator_name][benchmark_key]:
+                        evaluation_results[evaluator_name][benchmark_key][model_name] = {}
+                    
+                    evaluation_results[evaluator_name][benchmark_key][model_name][method_combo] = {}
+                    
+                    logger.info(f"    Evaluating {model_name} with {method_combo}")
+                    
+                    eval_start_time = time.time()
+                    run_count = 0
+                    for run_id, responses in runs.items():
+                        if evaluation_config.n_samples and len(responses) > evaluation_config.n_samples:
+                            responses = responses[:evaluation_config.n_samples]
+                        if evaluation_config.n_runs and run_count >= evaluation_config.n_runs:
+                            break
+                        run_count += 1
                 
-                if model_name not in evaluation_results[evaluator_name][benchmark_key]:
-                    evaluation_results[evaluator_name][benchmark_key][model_name] = {}
-                
-                evaluation_results[evaluator_name][benchmark_key][model_name][method_combo] = {}
-                
-                logger.info(f"    Evaluating {model_name} with {method_combo}")
-                
-                eval_start_time = time.time()
-                for run_id, responses in runs.items():
-                
-                    # Evaluate responses
-                    try:
-                        metrics, sample_results = evaluator.evaluate(responses)
-                        
-                        # Create evaluation result
-                        eval_result = EvaluationResult(
-                            model_id=model_name,
-                            method_config={"name": method_combo},
-                            evaluator_name=evaluator_name,
-                            metrics=metrics,
-                            runtime_seconds=time.time() - eval_start_time
-                        )
-                        
-                        # Add sample results
-                        for result in sample_results:
-                            eval_result.sample_results.append(result)
-                        
-                        evaluation_results[evaluator_name][benchmark_key][model_name][method_combo][run_id] = eval_result
-                        
-                        # Log metrics
-                        log_dict = {
-                            "benchmark": benchmark_key,
-                            "model": model_name,
-                            "method_combo": method_combo,
-                            **{f"metrics/{k}": v for k, v in metrics.items()},
-                            "evaluation_time": eval_result.runtime_seconds
-                        }
-                        wandb.log(log_dict)
-                        
-                        # Save results
-                        
-                        cols = list(sample_results[0].keys())
-                        results_table = wandb.Table(columns=cols)
-                        for result in sample_results:
-                            results_table.add_data(*[result.get(col, "") for col in cols])
-                        
-                        wandb.log({f"{benchmark_key}_{model_name}_{method_combo}_{evaluator_name}_results_{run_id}": results_table})
-                        
-                        df = pd.DataFrame(
-                            data=[[result.get(col, "") for col in cols] for result in sample_results],
-                            columns=cols
-                        )
+                        # Evaluate responses
+                        try:
+                            metrics, sample_results = evaluator.evaluate(responses)
                             
-                        artifact_name = f"{benchmark_key}_{model_name}_{method_combo}_{evaluator_name}_{run_id}"
-                        
-                        # add file for download
-                        path = f"{benchmark_key}/{model_name}/{method_combo}/{evaluator_name}/evaluation_{run_id}.csv"
+                            # Create evaluation result
+                            eval_result = EvaluationResult(
+                                model_id=model_name,
+                                method_config={"name": method_combo},
+                                evaluator_name=evaluator_name,
+                                metrics=metrics,
+                                runtime_seconds=time.time() - eval_start_time
+                            )
+                            
+                            # Add sample results
+                            for result in sample_results:
+                                eval_result.sample_results.append(result)
+                            
+                            evaluation_results[evaluator_name][benchmark_key][model_name][method_combo][run_id] = eval_result
+                            
+                            # Log metrics
+                            log_dict = {
+                                "benchmark": benchmark_key,
+                                "model": model_name,
+                                "method_combo": method_combo,
+                                **{f"metrics/{k}": v for k, v in metrics.items()},
+                                "evaluation_time": eval_result.runtime_seconds
+                            }
+                            if evaluation_config.upload_to_wandb:
+                                wandb.log(log_dict)
+                            
+                            # Save results
+                            cols = list(sample_results[0].keys())
+                            if evaluation_config.upload_to_wandb:
+                                results_table = wandb.Table(columns=cols)
+                                for result in sample_results:
+                                    results_table.add_data(*[result.get(col, "") for col in cols])
+                                
+                                wandb.log({f"{benchmark_key}_{model_name}_{method_combo}_{evaluator_name}_results_{run_id}": results_table})
+                                
+                            df = pd.DataFrame(
+                                data=[[result.get(col, "") for col in cols] for result in sample_results],
+                                columns=cols
+                            )
+                                
+                            artifact_name = f"{benchmark_key}_{model_name}_{method_combo}_{evaluator_name}_{run_id}"
+                            
+                            # add file for download
+                            path = f"{benchmark_key}/{model_name}/{method_combo}/{evaluator_name}/evaluation_{run_id}.csv"
 
-                        csv_path = evaluation_config.evaluations_dir / path
-                        os.makedirs(csv_path.parent, exist_ok=True)
-                        df.to_csv(csv_path, index=False)
+                            csv_path = evaluation_config.evaluations_dir / path
+                            os.makedirs(csv_path.parent, exist_ok=True)
+                            df.to_csv(csv_path, index=False)
+                            if evaluation_config.upload_to_wandb:
+                                artifact = wandb.Artifact(name=artifact_name, type="evaluation_results")
+                                artifact.add_file(csv_path, name=path)
 
-                        artifact = wandb.Artifact(name=artifact_name, type="evaluation_results")
-                        artifact.add_file(csv_path, name=path)
-                        
-                        #os.remove(csv_path)
-
-                        wandb.log_artifact(artifact)
-                        
-                    except Exception as e:
-                        logger.error(f"Error evaluating {model_method_key}: {str(e)}")
-                        import traceback
-                        logger.error(traceback.format_exc())
+                                wandb.log_artifact(artifact)
+                            
+                        except Exception as e:
+                            logger.error(f"Error evaluating {model_name} with {method_combo}: {str(e)}")
+                            import traceback
+                            logger.error(traceback.format_exc())
                     
                 # Track evaluation time
                 eval_time = time.time() - eval_start_time

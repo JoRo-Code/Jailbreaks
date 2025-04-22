@@ -46,7 +46,7 @@ def aggregate(config: AggregateConfig):
 
 def _aggregate_results(eval_results: dict, config: AggregateConfig):
 
-    # result[benchmark_key][model_method_key][evaluator_name][file_path.stem] = parsed_data
+    # result[benchmark_key][model_name][method_combo][evaluator_name][file_path.stem] = parsed_data
     
     all_data = []
     for benchmark_key, model_name_d in eval_results.items():
@@ -79,7 +79,7 @@ def _aggregate_results(eval_results: dict, config: AggregateConfig):
                     for metric_name, values in metrics.items():
                         # Store the values as a list
                         values = np.array(values)
-                        row_data[f'values_{metric_name}'] = values
+                        row_data[f'values_{metric_name}'] = values #';'.join(map(str, values))
                         # Calculate and store the average
                         row_data[f'avg_{metric_name}'] = values.mean()
                         # Calculate and store the standard deviation
