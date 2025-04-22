@@ -69,7 +69,7 @@ class LLM:
     def prepare_prompt(self, prompt: str) -> str:
         for method in self.methods:
             if isinstance(method, PromptInjection):
-                prompt = method.preprocess(prompt, self.model.config.name_or_path)
+                prompt = method.preprocess(prompt, self.name)
         prompt = format_prompts([prompt], self.tokenizer)[0]
         # TODO: fix prefix injection with chat templates
         return prompt
