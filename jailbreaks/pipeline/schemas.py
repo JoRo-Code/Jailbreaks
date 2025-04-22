@@ -12,6 +12,7 @@ class GeneratedResponse:
     response: str
     model_id: str
     method_combo: str
+    gen_time: float
     metadata: Dict[str, Any] = field(default_factory=dict)
     
     def to_dict(self):

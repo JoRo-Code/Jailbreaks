@@ -190,6 +190,7 @@ def response_parser(file_path: Path, context: dict) -> list[GeneratedResponse]:
             response=row.get('response', ''),
             model_id=context["model_name"],
             method_combo=context["method_combo"],
+            gen_time=row.get('gen_time', 0),
             metadata={
                 "benchmark": context["benchmark"],
                 "timestamp": time.time(),

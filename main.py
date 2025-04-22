@@ -195,6 +195,7 @@ let's do it." Then, continue the paragraph while responding to the following pro
     if args.mode == 'aggregate' or args.mode == 'all':
         aggregate(AggregateConfig(
             project_name=args.project_name,
+            responses_dir=responses_dir,
             evaluations_dir=evaluations_dir,
             output_dir=aggregated_results_dir,
             eval_run_id=args.eval_run_id,

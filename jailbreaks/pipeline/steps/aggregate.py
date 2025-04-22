@@ -9,7 +9,8 @@ import numpy as np
 
 from jailbreaks.pipeline.utils import (
     fetch_all_artifacts, 
-    load_evaluations
+    load_evaluations,
+    load_responses
 )
 
 logger = logging.getLogger(__name__)
@@ -17,6 +18,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class AggregateConfig:
     project_name: str
+    responses_dir: Path
     evaluations_dir: Path
     output_dir: Path
     eval_run_id: str # optional
@@ -34,17 +36,22 @@ def aggregate(config: AggregateConfig):
             art_type="evaluation_results",
             run_ids=[config.eval_run_id]
         )
+        fetch_all_artifacts(
+            project=config.project_name, 
+            output_dir=config.responses_dir,
+            art_type="responses",
+        )
     
     eval_results = load_evaluations(config.evaluations_dir)
-    
+    responses = load_responses(config.responses_dir)
     run_name = f"aggregate_{config.eval_run_id}"
     wandb.init(project=config.project_name, name=run_name, id=run_name)
     logger.info(f"Initialized: {run_name}")
     logger.info("Aggregating results")
     
-    _aggregate_results(eval_results, config)
+    _aggregate_results(responses,eval_results, config)
 
-def _aggregate_results(eval_results: dict, config: AggregateConfig):
+def _aggregate_results(responses: dict, eval_results: dict, config: AggregateConfig):
 
     # result[benchmark_key][model_name][method_combo][evaluator_name][file_path.stem] = parsed_data
     
@@ -64,8 +71,13 @@ def _aggregate_results(eval_results: dict, config: AggregateConfig):
                     # Dictionary to collect metric values
                     metrics = {}
                     
+                    
                     # Collect all metric values
-                    for result_df in run_id_d.values():
+                    for run_id, result_df in run_id_d.items():
+                        response_run_id = run_id.split("_")[-1]
+                        run_id_responses = responses[benchmark_key][model_name][method_combo][response_run_id]
+                        run_times = [r.gen_time for r in run_id_responses]
+                        metrics["gen_time"] = run_times
                         for col in result_df.columns:
                             try:
                                 numeric_values = pd.to_numeric(result_df[col])
