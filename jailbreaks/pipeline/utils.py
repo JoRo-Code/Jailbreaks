@@ -8,6 +8,7 @@ from dataclasses import dataclass
 
 import pandas as pd
 import wandb
+import pynvml
 
 from jailbreaks.pipeline.schemas import (
     EvaluationResult,
@@ -16,9 +17,11 @@ from jailbreaks.pipeline.schemas import (
 
 logger = logging.getLogger(__name__)
 
+# GPU tracking
+pynvml.nvmlInit()
+handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+
 def log_gpu_to_wandb():
-    import pynvml
-    handle = pynvml.nvmlDeviceGetHandleByIndex(0)
     util = pynvml.nvmlDeviceGetUtilizationRates(handle)
     mem = pynvml.nvmlDeviceGetMemoryInfo(handle)
 
