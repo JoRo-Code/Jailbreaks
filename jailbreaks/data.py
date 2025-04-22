@@ -12,9 +12,33 @@ logger = logging.getLogger(__name__)
 DATASET_DIR = "data"
 HARMFUL_CSV_PATH = os.path.join(DATASET_DIR, "harmful_behaviors.csv")
 HARMLESS_JSONL_PATH = os.path.join(DATASET_DIR, "harmless_instructions.jsonl")
+MALICIOUS_TXT_PATH = os.path.join(DATASET_DIR, "malicious_behaviors.txt")
 
 def ensure_dataset_dir():
     os.makedirs(DATASET_DIR, exist_ok=True)
+
+def get_malicious_instructions(test_split=0.0):
+    ensure_dataset_dir()
+    if not os.path.exists(MALICIOUS_TXT_PATH):
+        logger.info(f"Downloading malicious instructions to {MALICIOUS_TXT_PATH}...")
+        url = 'https://raw.githubusercontent.com/Princeton-SysML/Jailbreak_LLM/refs/heads/main/data/MaliciousInstruct.txt'
+        response = requests.get(url)
+        response.raise_for_status() # Raise an exception for bad status codes
+        with open(MALICIOUS_TXT_PATH, 'w', encoding='utf-8') as f:
+            f.write(response.content.decode('utf-8'))
+        logger.info("Download complete.")
+    else:
+        logger.info(f"Loading malicious instructions from {MALICIOUS_TXT_PATH}...")
+
+    with open(MALICIOUS_TXT_PATH, 'r', encoding='utf-8') as f:
+        instructions = [line.strip() for line in f.readlines()]
+    logger.info(f"Loaded {len(instructions)} malicious instructions.")
+
+    if test_split > 0:
+        train, test = train_test_split(instructions, test_size=test_split, random_state=42)
+        return train, test
+    
+    return instructions
 
 def get_advbench_instructions(test_split=0.0):
     ensure_dataset_dir()

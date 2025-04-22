@@ -37,7 +37,8 @@ from jailbreaks.evaluators.llm_judge.judge import LocalLLMJudge, GroqLLMJudge
 # Datasets
 from jailbreaks.data import (
     get_advbench_instructions, 
-    get_harmless_instructions
+    get_harmless_instructions,
+    get_malicious_instructions
 )
 
 logger = logging.getLogger(__name__)
@@ -88,6 +89,7 @@ def main():
     
     # Pipeline setup
     advbench_train, advbench_test = get_advbench_instructions(test_split=0.8)
+    malicious_instructions = get_malicious_instructions()
     
     #model_paths = ["Qwen/Qwen2-0.5B-Instruct", "Qwen/Qwen2-1.5B-Instruct"]
     # model_paths = ["meta-llama/Llama-3.1-8B-Instruct",
@@ -146,7 +148,9 @@ let's do it." Then, continue the paragraph while responding to the following pro
         [],  # Baseline (no methods)
     ]
 
-    benchmark = RefusalBenchmark(prompts=advbench_test, max_new_tokens=100, name="advbench-416")
+    #benchmark = RefusalBenchmark(prompts=advbench_test, max_new_tokens=100, name="advbench-416")
+    
+    malicious_benchmark = RefusalBenchmark(prompts=malicious_instructions, max_new_tokens=100, name="malicious-instruct")
     
     evaluators = [
         BaselineRefusalEvaluator(name="include-refusal"),
@@ -178,7 +182,7 @@ let's do it." Then, continue the paragraph while responding to the following pro
             run_id=args.run_id,
             model_paths=model_paths,
             method_combinations=method_combinations,
-            benchmarks=[benchmark],
+            benchmarks=[malicious_benchmark],
             batch_size=32,
             output_dir=responses_dir
         ))

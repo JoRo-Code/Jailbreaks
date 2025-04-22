@@ -1,5 +1,5 @@
 import os
-import time
+from datetime import datetime
 import wandb
 import logging
 from typing import List
@@ -14,12 +14,11 @@ class FitConfig:
     method_combinations: List[List[JailBreakMethod]]
     model_paths: List[str]
     project_name: str
-    run_name: str
     log_dir: str
     refit: bool = True
 
 def fit(config: FitConfig):
-    run_name = f"fit_{time.strftime('%Y%m%d_%H%M%S')}"
+    run_name = f"fit_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     wandb.init(project=config.project_name, name=run_name, id=run_name)
     logger.info("Step 1: Fitting methods")
     
@@ -38,6 +37,7 @@ def fit(config: FitConfig):
                 try:
                     for model_path in config.model_paths:
                         method.set_fit_dir(config.log_dir)
+                        import time
                         start_time = time.time()
                         method.fit(model_path, refit=config.refit)
                         method.save()
