@@ -1,3 +1,6 @@
+import os
+import time
+import wandb
 import logging
 from typing import List
 from dataclasses import dataclass
@@ -11,10 +14,17 @@ class FitConfig:
     method_combinations: List[List[JailBreakMethod]]
     model_paths: List[str]
     refit: bool = True
+    project_name: str
+    run_name: str
+    log_dir: str
 
 def fit(config: FitConfig):
+    if not config.run_name:
+        config.run_name = f"fit_{time.strftime('%Y%m%d_%H%M%S')}"
+    wandb.init(project=config.project_name, name=config.run_name, id=config.run_name)
     logger.info("Step 1: Fitting methods")
     
+    fit_times = {}
     for method_combo in config.method_combinations:
         if not method_combo:
             continue  # Skip baseline (no methods)
@@ -28,9 +38,23 @@ def fit(config: FitConfig):
                 logger.info(f"  Fitting method: {method_name}")
                 try:
                     for model_path in config.model_paths:
+                        method.set_fit_dir(config.log_dir)
+                        start_time = time.time()
                         method.fit(model_path, refit=config.refit)
                         method.save()
+                        end_time = time.time()
+                        fit_times[(model_path, method_name)] = end_time - start_time
                 except Exception as e:
                     logger.error(f"  Error fitting method {method_name}: {str(e)}")
             else:
                 logger.info(f"  Method {method_name} doesn't require fitting")
+    
+    wandb.log({"fit_times": fit_times})
+    logger.info(f"Step 1: Fitting methods complete. Total time taken: {sum(fit_times.values())} seconds")
+    csv_path = os.path.join(config.log_dir, "fit_times.csv")
+    os.makedirs(config.log_dir, exist_ok=True)
+    with open(csv_path, "w") as f:
+        f.write("model_path,method_name,time\n")
+        for (model_path, method_name), time in fit_times.items():
+            f.write(f"{model_path},{method_name},{time}\n")
+    

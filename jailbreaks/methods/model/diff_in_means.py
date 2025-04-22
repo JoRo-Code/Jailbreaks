@@ -3,6 +3,7 @@ import gc
 import time
 import logging
 import functools
+from pathlib import Path
 
 import torch
 from torch import Tensor
@@ -83,6 +84,7 @@ class DiffInMeans(ModelManipulation):
         self.harmful_prompts = harmful_prompts
         self.harmless_prompts = harmless_prompts
         self.generation_kwargs = generation_kwargs
+        self.fit_dir:str = None
     
     def apply(self, model_path: str) -> str:
         model = load_hooked_transformer(model_path)
@@ -97,6 +99,9 @@ class DiffInMeans(ModelManipulation):
         model.generate = new_generate
         
         return model
+    
+    def set_fit_dir(self, fit_dir: str):
+        self.fit_dir = Path(fit_dir) / "diff_in_means"
     
     def save(self, path: str = None):
         path = path or self.path
@@ -403,7 +408,7 @@ class DiffInMeans(ModelManipulation):
                         (f", error={result['error']}" if result['error'] else ""))
 
         # save logs to csv
-        log_dir = "logs/diff_in_means_fit"
+        log_dir = self.fit_dir
         os.makedirs(log_dir, exist_ok=True)
         timestamp = time.strftime("%Y%m%d-%H%M%S")
         model_name_safe = model_path.replace("/", "_") # Make model path safe for filename
