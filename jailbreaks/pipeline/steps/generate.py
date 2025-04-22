@@ -16,7 +16,6 @@ from jailbreaks.pipeline.schemas import (
 )
 from jailbreaks.benchmarks import Benchmark
 from jailbreaks.methods import JailBreakMethod
-from jailbreaks.pipeline.utils import log_gpu_to_wandb
 
 logger = logging.getLogger(__name__)
 
@@ -134,7 +133,6 @@ def _generate_responses_internal(config: GenerateConfig):
                         # Generate response
                         raw_prompts = [jailbreak_model.prepare_prompt(prompt) for prompt in batch_prompts]
                         batched_responses = jailbreak_model.generate_batch(batch_prompts, max_new_tokens=benchmark.max_new_tokens)
-                        log_gpu_to_wandb()
                         
                         # Calculate batch generation time
                         batch_gen_time = time.time() - batch_start_time
