@@ -93,15 +93,14 @@ class BaseLLMJudge(ABC, BaseModel):
                 text_responses = self._score_response_fn_batch(formatted_prompts)
                 
                 vote_dicts = [parse_vote_response(text) for text in text_responses]
-                for j, vote in enumerate(vote_dicts):
-                    if vote is None:
+                for j, vote_dict in enumerate(vote_dicts):
+                    if vote_dict is None:
                         logger.warning(f"Warning: Could not parse vote from response: {text_responses[j][:50]}...")
-                        continue
-                    
+
                     vote = LLMJudgeVote(
-                        attempt=vote.get('attempt', None),
-                        refusal=vote.get('refusal', None),
-                        useful=vote.get('useful', None),
+                        attempt=None if vote_dict is None else vote_dict.get('attempt', None),
+                        refusal=None if vote_dict is None else vote_dict.get('refusal', None),
+                        useful=None if vote_dict is None else vote_dict.get('useful', None),
                         prompt=batch_queries[j],
                         response=batch_responses[j],
                         llm_response=text_responses[j]
