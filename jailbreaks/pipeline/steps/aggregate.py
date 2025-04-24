@@ -10,7 +10,8 @@ import numpy as np
 from jailbreaks.pipeline.utils import (
     fetch_all_artifacts, 
     load_evaluations,
-    load_responses
+    load_responses,
+    FetchFilter
 )
 
 logger = logging.getLogger(__name__)
@@ -33,13 +34,17 @@ def aggregate(config: AggregateConfig):
         fetch_all_artifacts(
             project=config.project_name, 
             output_dir=config.evaluations_dir,
-            art_type="evaluation_results",
-            run_ids=[config.eval_run_id]
+            fetch_filter=FetchFilter(
+                run_ids=[config.eval_run_id],
+                art_type="evaluation_results",
+            ),
         )
         fetch_all_artifacts(
             project=config.project_name, 
             output_dir=config.responses_dir,
-            art_type="responses",
+            fetch_filter=FetchFilter(
+                art_type="responses",
+            ),
         )
     
     eval_results = load_evaluations(config.evaluations_dir)
