@@ -2,62 +2,84 @@ import os
 import json
 import re
 import logging
-from typing import Tuple, Any
+from typing import Tuple, Any, Dict, Optional
 from pydantic import BaseModel, Field
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from google import genai
 from groq import Groq
 
 from .samples import examples
-from .templates import REFUSAL_QUALITY_TEMPLATE
+from .templates import ETHICAL_HARMFULNESS_TEMPLATE
 
 from jailbreaks.llm import LLM
 
 logger = logging.getLogger("LLM Judge")
 
-def parse_vote_response(text:str) -> dict:        
-    parse_error = {"refusal":None, "attempt":None, "useful":None}
-    match = re.search(r"```json\s*({.*?})\s*```", text, re.DOTALL)
+# All numeric metrics that the judge is expected to emit.
+# Extend this list whenever you introduce a new criterion.
+METRICS = ["refusal", "harmful", "ethical"]
+
+def parse_vote_response(text: str) -> dict:        
+    """
+    Parse the LLM's JSON chunk and return **all** keys it supplies,
+    converting every key (and any string value) to lowercase.  
+    We do *not* force the presence of any particular field – that job
+    is now handled by METRICS / _empty_metrics().
+    """
+    match = (
+        re.search(r"```json\s*({.*?})\s*```", text, re.DOTALL)
+        or re.search(r"({.*?})", text, re.DOTALL)
+        or re.search(r"({[^}]*)", text, re.DOTALL)
+    )
+
     if not match:
-        match = re.search(r"({.*?})", text, re.DOTALL)
-    
-    if not match:
-        match = re.search(r"({[^}]*)", text, re.DOTALL)
-        if match:
-            # Attempt to fix incomplete JSON by adding missing closing brace
-            json_string = match.group(1).strip() + "}"
-        else:
-            logger.warning(f"Warning: Could not extract JSON nor dictionary from response: {text[:50]}...")
-            return parse_error
-    else:
-        json_string = match.group(1).strip()
-    
+        logger.warning("Could not extract JSON from response")
+        return {}
+
+    json_string = match.group(1).strip()
+    if match.re.pattern.endswith("({[^}]*)"):
+        json_string += "}"  # close incomplete brace
+
     try:
-        score_data = json.loads(json_string)
-    except json.JSONDecodeError as e:
-        logger.warning(f"Warning: Could not parse JSON from response: {text[:50]}...")
-        logger.warning(f"Error: {e}")
-        return parse_error
+        raw_dict = json.loads(json_string)
+    except json.JSONDecodeError as exc:
+        logger.warning(f"JSON parse error: {exc}")
+        return {}
 
-    if 'attempt' not in score_data or 'useful' not in score_data or 'refusal' not in score_data:
-        logger.warning(f"Warning: Missing keys in JSON response: {text[:50]}...")
-        logger.warning(f"Parsed JSON: {score_data}")
-        return parse_error
+    # ── post-processing: lowercase keys and any string values ──────────────────
+    processed: dict[str, Any] = {}
+    for k, v in raw_dict.items():
+        new_key = str(k).lower()
 
-    logger.debug(f"Parsed score data: {score_data}")
+        if isinstance(v, str):
+            processed[new_key] = v.lower()
+        elif isinstance(v, list):
+            processed[new_key] = [
+                elem.lower() if isinstance(elem, str) else elem for elem in v
+            ]
+        else:
+            processed[new_key] = v
 
-    return score_data
+    return processed
 
 @dataclass
 class LLMJudgeVote:
-    attempt: int
-    refusal: int
-    useful: int
-    prompt: str
-    response: str
-    llm_response: str
+    scores: Dict[str, Optional[int]] = field(default_factory=dict)
+
+    prompt: str = ""
+    response: str = ""
+    llm_response: list[str] = field(default_factory=list)
+    
+    def metadata(self) -> dict:
+        record = {
+            "prompt":        self.prompt,
+            "response":      self.response,
+            "llm_response":  self.llm_response,
+        }
+        record.update(self.scores)
+        return record
 
 class BaseLLMJudge(ABC, BaseModel):
     model: Any = Field(description="The LLM model to use for judging")
@@ -74,78 +96,93 @@ class BaseLLMJudge(ABC, BaseModel):
         pass
     
     def _prepare_prompt(self, query:str, response:str) -> str:
-        return REFUSAL_QUALITY_TEMPLATE.format(
+        return ETHICAL_HARMFULNESS_TEMPLATE.format(
             query=query, 
             response=response, 
-            examples=json.dumps(examples, indent=4)
         )
 
-    def vote_batch(self, queries:list[str], responses:list[str], batch_size:int=32) -> list[dict]:
-        try:
-            all_votes = []
-            
-            for i in range(0, len(queries), batch_size):
-                batch_queries = queries[i:i+batch_size]
-                batch_responses = responses[i:i+batch_size]
-                
-                formatted_prompts = [self._prepare_prompt(query, response) 
-                                    for query, response in zip(batch_queries, batch_responses)]
-                text_responses = self._score_response_fn_batch(formatted_prompts)
-                
-                vote_dicts = [parse_vote_response(text) for text in text_responses]
-                for j, vote_dict in enumerate(vote_dicts):
-                    if vote_dict is None:
-                        logger.warning(f"Warning: Could not parse vote from response: {text_responses[j][:50]}...")
+    def vote_batch(self, queries: list[str], responses: list[str], batch_size: int = 32) -> list[LLMJudgeVote]:
+        all_votes: list[LLMJudgeVote] = []
 
-                    vote = LLMJudgeVote(
-                        attempt=None if vote_dict is None else vote_dict.get('attempt', None),
-                        refusal=None if vote_dict is None else vote_dict.get('refusal', None),
-                        useful=None if vote_dict is None else vote_dict.get('useful', None),
-                        prompt=batch_queries[j],
-                        response=batch_responses[j],
-                        llm_response=text_responses[j]
-                    )
-                    all_votes.append(vote)
+        for i in range(0, len(queries), batch_size):
+            batch_queries    = queries[i:i + batch_size]
+            batch_responses  = responses[i:i + batch_size]
+            formatted_prompt = [
+                self._prepare_prompt(q, r) for q, r in zip(batch_queries, batch_responses)
+            ]
 
-            return all_votes
-        except Exception as e:
-            logger.warning(f"An unexpected error occurred while scoring batch: {e}")
-            raise e
+            llm_texts  = self._score_response_fn_batch(formatted_prompt)
+
+            vote_dicts: list[dict]      = []
+            attempts:   list[list[str]] = []
+
+            for idx, first_txt in enumerate(llm_texts):
+                MAX_RESCORING_ATTEMPTS = 3
+                run_texts = [first_txt]
+
+                parsed_response = parse_vote_response(first_txt)
+                if not parsed_response:
+                    for _ in range(MAX_RESCORING_ATTEMPTS):
+                        logger.info("Empty response detected, rescoring...")
+                        prompt        = self._prepare_prompt(batch_queries[idx], batch_responses[idx])
+                        rescored_txt  = self._score_response_fn(prompt)
+                        run_texts.append(rescored_txt)
+
+                        parsed_response = parse_vote_response(rescored_txt)
+                        if parsed_response:
+                            break
+
+                vote_dicts.append(parsed_response or {})
+                attempts.append(run_texts)
+
+            for j, vd in enumerate(vote_dicts):
+                scores = _empty_metrics()
+                scores.update({k: vd.get(k) for k in METRICS if k in vd})
+
+                vote = LLMJudgeVote(
+                    scores=scores,
+                    prompt=batch_queries[j],
+                    response=batch_responses[j],
+                    llm_response=attempts[j],               # ← every text for this item
+                )
+                all_votes.append(vote)
+
+        return all_votes
         
     
-    def score(self, query, response, n_votes:int=1) -> Tuple[dict, dict, list]:
-        votes = {}
-        key_counts = {}
+    # def score(self, query, response, n_votes:int=1) -> Tuple[dict, dict, list]:
+    #     votes = {}
+    #     key_counts = {}
 
-        raw_responses = []
-        s, raw_responses = self.vote(query, response, n_votes)
-        for i in range(n_votes):
-            if s[i] is not None:
-                for key in ['refusal', 'attempt', 'useful']:
-                    votes[key] = votes.get(key, 0) + s[i].get(key, 0)
-                    key_counts[key] = key_counts.get(key, 0) + 1
+    #     raw_responses = []
+    #     s, raw_responses = self.vote(query, response, n_votes)
+    #     for i in range(n_votes):
+    #         if s[i] is not None:
+    #             for key in ['refusal', 'attempt', 'useful']:
+    #                 votes[key] = votes.get(key, 0) + s[i].get(key, 0)
+    #                 key_counts[key] = key_counts.get(key, 0) + 1
             
-        majority_vote = {k: v > key_counts.get(k, 0)/2 for k, v in votes.items()}
+    #     majority_vote = {k: v > key_counts.get(k, 0)/2 for k, v in votes.items()}
         
-        return majority_vote, votes, key_counts, raw_responses
+    #     return majority_vote, votes, key_counts, raw_responses
     
-    def vote(self, query, response, n_votes:int=1):
-        try:
-            formatted_prompt = self._prepare_prompt(query, response)
-            prompts = [formatted_prompt] * n_votes
-            text_responses = self._score_response_fn_batch(prompts)
+    # def vote(self, query, response, n_votes:int=1):
+    #     try:
+    #         formatted_prompt = self._prepare_prompt(query, response)
+    #         prompts = [formatted_prompt] * n_votes
+    #         text_responses = self._score_response_fn_batch(prompts)
 
-            if not text_responses:
-                logger.warning(f"No response text received from the model for query: {query[:50]}...")
-                return None
+    #         if not text_responses:
+    #             logger.warning(f"No response text received from the model for query: {query[:50]}...")
+    #             return None
             
-            vote_data = [parse_vote_response(text) for text in text_responses]
+    #         vote_data = [parse_vote_response(text) for text in text_responses]
             
-            return vote_data, text_responses
+    #         return vote_data, text_responses
 
-        except Exception as e:
-            logger.warning(f"An unexpected error occurred for query '{query[:50]}...': {e}")
-            return None 
+    #     except Exception as e:
+    #         logger.warning(f"An unexpected error occurred for query '{query[:50]}...': {e}")
+    #         return None 
 
 class GoogleLLMJudge(BaseLLMJudge):
     def __init__(self, model:str="gemini-2.0-flash-lite"):
@@ -203,3 +240,6 @@ class GroqLLMJudge(BaseLLMJudge):
 
     class Config:
         arbitrary_types_allowed = True
+
+def _empty_metrics() -> dict[str, None]:
+    return {m: None for m in METRICS}
