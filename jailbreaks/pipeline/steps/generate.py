@@ -5,6 +5,7 @@ from pathlib import Path
 from dataclasses import dataclass
 from typing import List
 import uuid
+from contextlib import suppress
 
 import pandas as pd
 import wandb
@@ -28,6 +29,7 @@ class GenerateConfig:
     benchmarks: List[Benchmark]
     batch_size: int
     output_dir: Path = Path("tmp_responses")
+    registry_artifact_name: str = "generations_registry"
     
 
 def generate(config: GenerateConfig):
@@ -94,6 +96,40 @@ def _generate_responses_internal(config: GenerateConfig):
                         'batch_times': []
                     }
     
+
+    def _load_registry() -> pd.DataFrame:
+        """
+        Download the latest registry artefact if it exists, otherwise
+        return an empty DataFrame.
+        """
+        api = wandb.Api()
+        with suppress(Exception):
+            art = api.artifact(f"{config.project_name}/{config.registry_artifact_name}:latest")
+            csv_path = Path(art.download()).joinpath("registry.csv")
+            return pd.read_csv(
+                csv_path,
+                dtype={
+                    "run_name"      : str,
+                    "run_id"        : str,
+                    "benchmark"     : str,
+                    "model"         : str,
+                    "method_combo"  : str,
+                    "generation_no" : "Int64",
+                    "num_responses" : "Int64",
+                    "total_gen_time": float,
+                }
+            )
+        
+        return pd.DataFrame(columns=[
+            "run_name", "run_id",
+            "benchmark", "model", "method_combo",
+            "generation_no",
+            "num_responses", "total_gen_time"
+        ])
+
+    registry_df = _load_registry()
+    new_rows = [] 
+
     for benchmark in config.benchmarks:
         benchmark_name = benchmark.__str__()
         benchmark_key = benchmark_name.lower().replace(" ", "_")
@@ -222,5 +258,84 @@ def _generate_responses_internal(config: GenerateConfig):
                 
                 wandb.log_artifact(artifact)
 
-                
+                prev_runs_mask = (
+                    (registry_df["benchmark"]    == benchmark_key) &
+                    (registry_df["model"]        == model_short_name) &
+                    (registry_df["method_combo"] == combo_name)
+                )
+
+                # Look up the previous generation_no (if any) and add 1
+                if prev_runs_mask.any():
+                    last_gen = registry_df.loc[prev_runs_mask, "generation_no"].max()
+                    next_gen_no = (0 if pd.isna(last_gen) else int(last_gen)) + 1
+                else:
+                    next_gen_no = 1
+
+                new_rows.append({
+                    "run_name"      : wandb.run.name,
+                    "run_id"        : config.run_id,
+                    "benchmark"     : benchmark_key,
+                    "model"         : model_short_name,
+                    "method_combo"  : combo_name,
+                    "generation_no" : next_gen_no,
+                    "num_responses" : num_samples,
+                    "total_gen_time": total_generation_time
+                })
+    
+    if new_rows:
+        # merge the old registry with the freshly-generated rows
+        registry_df = pd.concat(
+            [registry_df, pd.DataFrame(new_rows)],
+            ignore_index=True
+        )
+
+        # Keep only the *latest* generation for every combination
+        registry_df = (
+            registry_df
+            .sort_values("generation_no")
+            .drop_duplicates(
+                subset=["benchmark", "model", "method_combo"],
+                keep="last"
+            )
+            .reset_index(drop=True)
+        )
+
+
+        str_cols  = ["run_name", "run_id",
+                     "benchmark", "model", "method_combo"]
+        num_cols  = ["generation_no", "num_responses", "total_gen_time"]
+
+        registry_df[str_cols] = registry_df[str_cols].fillna("").astype(str)
+        registry_df[num_cols] = registry_df[num_cols].apply(
+            pd.to_numeric, errors="coerce"
+        )
+
+        # save locally
+        reg_path = config.output_dir / "registry.csv"
+        reg_path.parent.mkdir(parents=True, exist_ok=True)
+        registry_df.to_csv(reg_path, index=False)
+
+        # create new version of the artefact
+        reg_art = wandb.Artifact(name=config.registry_artifact_name, type="registry")
+        reg_art.add_file(reg_path, name="registry.csv")
+        wandb.log_artifact(reg_art)
+
+        # also put it in the current run's logs for quick inspection
+        wandb.log({
+            "generation_registry": wandb.Table(dataframe=registry_df)
+        })
+
+        # Build a compact summary: how many generations per combination?
+        summary_df = (
+            registry_df
+            .groupby(["benchmark", "model", "method_combo"], as_index=False)
+            .agg(total_generations=("generation_no", "max"))
+            .sort_values(["benchmark", "model", "method_combo"])
+        )
+
+        # log the summary table for quick inspection
+        wandb.log({
+            "generation_registry": wandb.Table(dataframe=registry_df),
+            "generation_summary" : wandb.Table(dataframe=summary_df)
+        })
     
