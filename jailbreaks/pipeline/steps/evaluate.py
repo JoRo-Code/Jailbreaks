@@ -32,8 +32,9 @@ class EvaluationConfig:
     eval_run_id: str # optional
     use_local: bool = False
     upload_to_wandb: bool = True
-    n_runs: int = None
+    n_runs: int = None # number of runs to evaluate
     n_samples: int = None
+    skip_existing: bool = True # skip evaluation if it already exists
     
 def evaluate(evaluation_config: EvaluationConfig):
     if not evaluation_config.use_local:
@@ -107,6 +108,14 @@ def _evaluate_responses_internal(evaluation_config: EvaluationConfig, generated_
                     eval_start_time = time.time()
                     run_count = 0
                     for run_id, responses in runs.items():
+                        csv_path = (
+                            evaluation_config.evaluations_dir
+                            / f"{benchmark_key}/{model_name}/{method_combo}/{evaluator_name}/"
+                            / f"evaluation_{run_id}.csv"
+                        )
+                        if evaluation_config.skip_existing and csv_path.exists():
+                            logger.info(f"    Skipping {model_name} with {method_combo} and {run_id} because it already exists")
+                            continue
                         if evaluation_config.n_samples and len(responses) > evaluation_config.n_samples:
                             responses = responses[:evaluation_config.n_samples]
                         if evaluation_config.n_runs and run_count >= evaluation_config.n_runs:
