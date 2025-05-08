@@ -48,7 +48,13 @@ def fit(config: FitConfig):
             else:
                 logger.info(f"  Method {method_name} doesn't require fitting")
     
-    wandb.log({"fit_times": fit_times})
+    try:
+        fit_times_for_wandb = {}
+        for (model_path, method_name), t in fit_times.items():
+            fit_times_for_wandb.setdefault(model_path, {})[method_name] = t
+        wandb.log({"fit_times": fit_times_for_wandb})
+    except Exception as e:
+        logger.error(f"Error logging fit times: {str(e)}")
     logger.info(f"Step 1: Fitting methods complete. Total time taken: {sum(fit_times.values())} seconds")
     csv_path = os.path.join(config.log_dir, "fit_times.csv")
     os.makedirs(config.log_dir, exist_ok=True)
