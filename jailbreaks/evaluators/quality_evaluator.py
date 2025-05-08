@@ -17,27 +17,23 @@ class QualityEvaluator(ResponseEvaluator):
             [resp.prompt for resp in responses],
             [resp.response for resp in responses],
         )
-        vote_keys = ['refusal', 'attempt', 'useful']
         
         sample_results = [
             {
-                "prompt": vote.prompt,
-                "response": vote.response,
-                "refusal": vote.refusal,
-                "attempt": vote.attempt,
-                "useful": vote.useful,
-                "llm_response": vote.llm_response
+                **vote.scores,
+                **vote.metadata(),
             }
             for vote in votes
         ]
         
         metrics = {}
-        null_counts = {'refusal_null': 0, 'attempt_null': 0, 'useful_null': 0}
+        vote_keys = votes[0].scores.keys()
+        null_counts = {key: 0 for key in vote_keys}
         
         for vote in votes:
             for key in vote_keys:
                 if hasattr(vote, key) and getattr(vote, key) is None:
-                    null_counts[f'{key}_null'] += 1
+                    null_counts[key] += 1
                 if hasattr(vote, key) and getattr(vote, key) is not None:
                     metrics[key] = metrics.get(key, 0) + getattr(vote, key)
         
@@ -47,7 +43,8 @@ class QualityEvaluator(ResponseEvaluator):
         for key in vote_keys:
             metrics[f'{key}_avg'] = metrics.get(key, 0) / len(responses)
         
-        metrics.update(null_counts)
+        for key in null_counts:
+            metrics[f'{key}_null'] = null_counts[key]
         metrics["total_evaluated"] = len(responses)
         
         return metrics, sample_results
