@@ -20,8 +20,8 @@ class QualityEvaluator(ResponseEvaluator):
         
         sample_results = [
             {
-                **vote.scores,
                 **vote.metadata(),
+                **vote.scores,
             }
             for vote in votes
         ]

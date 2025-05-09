@@ -19,7 +19,7 @@ logger = logging.getLogger("LLM Judge")
 
 # All numeric metrics that the judge is expected to emit.
 # Extend this list whenever you introduce a new criterion.
-METRICS = ["refusal", "harmful", "ethical"]
+METRICS = ["refusal", "harmful", "ethical", "depth"]
 
 def parse_vote_response(text: str) -> dict:        
     """
@@ -78,7 +78,6 @@ class LLMJudgeVote:
             "response":      self.response,
             "llm_response":  self.llm_response,
         }
-        record.update(self.scores)
         return record
 
 class BaseLLMJudge(ABC, BaseModel):
@@ -243,3 +242,4 @@ class GroqLLMJudge(BaseLLMJudge):
 
 def _empty_metrics() -> dict[str, None]:
     return {m: None for m in METRICS}
+
