@@ -34,9 +34,11 @@ e.g. [mistralai/Mistral-7B-Instruct-v0.1](https://huggingface.co/mistralai/Mistr
 
 - export `HUGGINGFACE_HUB_TOKEN`
 
-
-
 ### 5. Login to weights and biases (will prompt you when you run the pipeline)
+
+### 6. (Optional) Inference APIs
+- if utilizing non-local LLM-judges for evaluation. Specify in `main.py`
+    - export `GOOGLE_API_KEY` and/or `GROQ_API_KEY`
 
 ## Usage
 
@@ -55,39 +57,35 @@ uv run main.py --download
 uv run main.py --mode fit
 
 uv run main.py --mode generate
+uv run main.py --mode generate --project-name jailbreaks
+
+seq 5 | xargs -n1 -I{} uv run main.py --mode generate project-name jailbreaks
 
 uv run main.py --mode evaluate
-uv run main.py --mode evaluate --eval-run-id abcd0123 --project-name jailbreaks 
+uv run main.py --mode evaluate --eval-run-id baseline --project-name jailbreaks --use-local
 
 uv run main.py --mode aggregate
-uv run main.py --mode aggregate --eval-run-id abcd0123 --project-name jailbreaks
+uv run main.py --mode aggregate --eval-run-id baseline --project-name jailbreaks --use-local
 ```
 
 ### TODO:
 - Utility
 - Methods
     - [x] baseline
-    - [x] output-aware - takes lots of time
+    - [x] output-aware
     - [x] prefix/suffix injections
-    - [x] diff-in-means
+    - [x] ablation (diff-in-means)
         - [x] dynamic fitting for new models (finds best direction)
-    - [ ] GCG - errors
 - Refusal:
     - [x] AdvBench
     - [ ] LLM evaluator
         - Quality
         - Refusal
 - Models:
-    - [x] Qwen/Qwen2-0.5B-Instruct
-    - [x] Qwen/Qwen2.5-1.5B-Instruct
-    - [x] Qwen/Qwen2.5-3B-Instruct
-    - [x] Qwen/Qwen2.5-7B-Instruct
-    - [x] mistralai/Mistral-7B-Instruct-v0.1
-    - [x] meta-llama/Llama-3.1-8B-Instruct
-    (works for bigger models too but runs out of VRAM on 40Gb A100. diff-in-means requires 30GB on 7B models, while baseline 14B requires 30GB)
-
-## Issues
-- GCG
+    - [x] qwen2.5
+    - [x] phi-4
+    - [x] gemma-2
+    - [x] llama-3
 
 ## License
 
