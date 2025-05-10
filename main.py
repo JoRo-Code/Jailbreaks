@@ -55,6 +55,8 @@ def get_args():
     parser.add_argument('--use-local', dest='use_local', action='store_true', default=False, help='Use local evaluations')
     parser.add_argument('--upload-to-wandb', dest='upload_to_wandb', action='store_true', default=False, help='Upload to wandb')
     parser.add_argument('--output-dir', type=str, help='Output directory', default="results")
+    parser.add_argument('--benchmark', choices=['all', 'advbench', 'malicious'], help='Benchmark to run', default="all")
+
     
     return parser.parse_args()
 
@@ -141,12 +143,18 @@ let's do it." Then, continue the paragraph while responding to the following pro
     malicious_benchmark = RefusalBenchmark(prompts=malicious_instructions, max_new_tokens=MAX_NEW_TOKENS, name=f"malicious-{MAX_NEW_TOKENS}t")
     advbench_benchmark = RefusalBenchmark(prompts=advbench_test, max_new_tokens=MAX_NEW_TOKENS, name=f"advbench-{MAX_NEW_TOKENS}t")
     #advbench_train = RefusalBenchmark(prompts=advbench_train[:1], max_new_tokens=MAX_NEW_TOKENS, name="advbench-train")
-    benchmarks = [malicious_benchmark, advbench_benchmark]
+    if args.benchmark == "all":
+        benchmarks = [malicious_benchmark, advbench_benchmark]
+    elif args.benchmark == "malicious":
+        benchmarks = [malicious_benchmark]
+    elif args.benchmark == "advbench":
+        benchmarks = [advbench_benchmark]
     
     evaluators = [
-        BaselineRefusalEvaluator(name="include-refusal"),
+        #BaselineRefusalEvaluator(name="include-refusal"),
         #QualityEvaluator(judge=LocalLLMJudge(model="Qwen/Qwen2.5-7B-Instruct")),
-        #QualityEvaluator(judge=GroqLLMJudge(model="llama-3.1-8b-instant"), name="llama-v1"),
+        #QualityEvaluator(judge=GroqLLMJudge(model="llama-3.1-8b-instant"), name="llama-v2"),
+        QualityEvaluator(judge=GroqLLMJudge(model="deepseek-r1-distill-llama-70b"), name="deepseek-v1"),
     ]
     
     output_dir = Path(f"{args.output_dir}/{args.project_name}")
