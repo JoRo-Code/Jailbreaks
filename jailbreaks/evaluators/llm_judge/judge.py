@@ -6,6 +6,7 @@ from typing import Tuple, Any, Dict, Optional
 from pydantic import BaseModel, Field
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from concurrent.futures import ThreadPoolExecutor
 
 from google import genai
 from groq import Groq
@@ -98,6 +99,24 @@ class BaseLLMJudge(ABC, BaseModel):
             query=query, 
             response=response, 
         )
+
+    # ---------- NEW: generic concurrent batching helper ------------------
+    #
+    # Sub-classes can still override this if they have a *truly* async
+    # SDK, but for normal blocking SDKs this "thread-pool fan-out" gives
+    # us non-blocking behaviour from the caller's point of view.
+    #
+    def _score_response_fn_batch(self, prompts: list[str]) -> list[str]:
+        """
+        Default implementation – execute `_score_response_fn` for each
+        prompt in a thread-pool so the HTTP requests run in parallel.
+        """
+        if not prompts:
+            return []
+
+        max_workers = min(len(prompts), 16) # groq has 1000 requests per minute
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            return list(pool.map(self._score_response_fn, prompts))
 
     def vote_batch(self, queries: list[str], responses: list[str], batch_size: int = 32) -> list[LLMJudgeVote]:
         all_votes: list[LLMJudgeVote] = []
@@ -196,10 +215,6 @@ class GoogleLLMJudge(BaseLLMJudge):
             contents=prompt
         ).text.strip()
     
-    def _score_response_fn_batch(self, prompts:list[str]) -> str:
-        return [self._score_response_fn(prompt) for prompt in prompts]
-        
-        
 
 class LocalLLMJudge(BaseLLMJudge):
     def __init__(self, model:str):
@@ -232,12 +247,6 @@ class GroqLLMJudge(BaseLLMJudge):
             max_tokens=1000,
         )
         return response.choices[0].message.content
-
-    def _score_response_fn_batch(self, prompts:list[str]) -> str:
-        return [self._score_response_fn(prompt) for prompt in prompts]
-
-    class Config:
-        arbitrary_types_allowed = True
 
 def _empty_metrics() -> dict[str, None]:
     return {m: None for m in METRICS}
