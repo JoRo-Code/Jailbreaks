@@ -10,7 +10,6 @@ from dataclasses import dataclass, field
 from google import genai
 from groq import Groq
 
-from .samples import examples
 from .templates import ETHICAL_HARMFULNESS_TEMPLATE
 
 from jailbreaks.llm import LLM
@@ -142,7 +141,7 @@ class BaseLLMJudge(ABC, BaseModel):
                     scores=scores,
                     prompt=batch_queries[j],
                     response=batch_responses[j],
-                    llm_response=attempts[j],               # ← every text for this item
+                    llm_response=attempts[j],
                 )
                 all_votes.append(vote)
 
