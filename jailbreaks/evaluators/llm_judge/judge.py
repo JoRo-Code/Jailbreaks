@@ -7,6 +7,8 @@ from pydantic import BaseModel, Field
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from concurrent.futures import ThreadPoolExecutor
+import threading
+import time
 
 from google import genai
 from groq import Groq
@@ -114,7 +116,7 @@ class BaseLLMJudge(ABC, BaseModel):
         if not prompts:
             return []
 
-        max_workers = min(len(prompts), 16) # groq has 1000 requests per minute
+        max_workers = min(len(prompts), 16) # groq has 1000 requests per minute, 3000 tokens per minute
         with ThreadPoolExecutor(max_workers=max_workers) as pool:
             return list(pool.map(self._score_response_fn, prompts))
 
@@ -237,16 +239,66 @@ class GroqLLMJudge(BaseLLMJudge):
             api_key=os.environ.get("GROQ_API_KEY"),
         )
         super().__init__(model=model, client=client)
- 
-    def _score_response_fn(self, prompt:str) -> str:
-        response = self.client.chat.completions.create(
-            model=self.model,
-            messages=[
-                {"role": "user", "content": prompt},
-            ],
-            max_tokens=2000,
+
+        self._cooldown_lock: threading.Lock = threading.Lock()
+        self._cooldown_until: float         = 0.0
+        self._max_tokens: int              = 2000
+
+    def _score_response_fn(self, prompt: str) -> str:
+        MAX_RETRIES           = 5
+        COOLDOWN_SCHEDULE_SEC = (60, 60, 60, 60)
+
+        def _is_rate_limited(exc: Exception) -> bool:
+            txt = str(exc).lower()
+            return any(kw in txt for kw in ("rate limit", "too many", "429"))
+
+        def _is_server_error(exc: Exception) -> bool:
+            txt = str(exc).lower()
+            return any(kw in txt for kw in ("internal server error", "500"))
+
+        for attempt in range(1, MAX_RETRIES + 1):
+
+            now = time.time()
+            with self._cooldown_lock:
+                wait_secs = max(0.0, self._cooldown_until - now)
+
+            if wait_secs > 0:
+                logger.info(
+                    f"[GroqLLMJudge] Global cooldown active "
+                    f"({wait_secs:.1f}s left). Worker sleeping…"
+                )
+                time.sleep(wait_secs)
+
+            try:
+                response = self.client.chat.completions.create(
+                    model=self.model,
+                    messages=[{"role": "user", "content": prompt}],
+                    max_tokens=self._max_tokens,
+                )
+                return response.choices[0].message.content
+
+            except Exception as err:
+                if not (_is_rate_limited(err) or _is_server_error(err)):
+                    logger.error(f"[GroqLLMJudge] Non-recoverable error: {err}")
+                    raise
+
+                # Map `attempt` (1-based) to index in the cooldown schedule
+                idx = min(attempt - 1, len(COOLDOWN_SCHEDULE_SEC) - 1)
+                cooldown = COOLDOWN_SCHEDULE_SEC[idx]
+
+                logger.warning(
+                    f"[GroqLLMJudge] Transient error "
+                    f"({'rate-limit' if _is_rate_limited(err) else 'server-error'}) "
+                    f"(attempt {attempt}/{MAX_RETRIES}). "
+                    f"Entering {cooldown}s cooldown."
+                )
+                with self._cooldown_lock:
+                    self._cooldown_until = time.time() + cooldown
+                continue
+
+        raise RuntimeError(
+            f"[GroqLLMJudge] Aborted after {MAX_RETRIES} transient-error retries."
         )
-        return response.choices[0].message.content
 
 def _empty_metrics() -> dict[str, None]:
     return {m: None for m in METRICS}
