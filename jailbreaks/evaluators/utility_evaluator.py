@@ -1,7 +1,8 @@
 import logging
-from typing import Dict, Any, Optional, Literal
+from typing import Dict, Any, Optional, Literal, List
 import re
 
+from jailbreaks.pipeline.schemas import GeneratedResponse
 from jailbreaks.evaluators.base import ResponseEvaluator
 
 logger = logging.getLogger(__name__)
@@ -29,7 +30,10 @@ class UtilityEvaluator(ResponseEvaluator):
         
         super().__init__(name=name)
     
-    def evaluate(self, prompt: Dict[str, Any], response: str) -> Dict[str, Any]:
+    def evaluate(self, responses: List[GeneratedResponse]) -> Dict[str, Any]:
+        return [self.evaluate_single(resp.prompt, resp.response) for resp in responses]
+    
+    def evaluate_single(self, prompt: Dict[str, Any], response: str) -> Dict[str, Any]:
         """
         Evaluate a response to a utility prompt.
         
