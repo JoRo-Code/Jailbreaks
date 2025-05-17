@@ -42,6 +42,10 @@ from jailbreaks.data import (
     get_malicious_instructions
 )
 
+
+from jailbreaks.benchmarks.utility_benchmark import UtilityBenchmark
+from jailbreaks.evaluators.utility_evaluator import UtilityEvaluator
+
 logger = logging.getLogger(__name__)
 random.seed(42)
 
@@ -57,7 +61,7 @@ def get_args():
     parser.add_argument('--use-local', dest='use_local', action='store_true', default=False, help='Use local evaluations')
     parser.add_argument('--upload-to-wandb', dest='upload_to_wandb', action='store_true', default=False, help='Upload to wandb')
     parser.add_argument('--output-dir', type=str, help='Output directory', default="results")
-    parser.add_argument('--benchmark', choices=['all', 'advbench', 'malicious', "harmless"], help='Benchmark to run', default="all")
+    parser.add_argument('--benchmark', choices=['all', 'advbench', 'malicious', "harmless", "mmlu", "hellaswag"], help='Benchmark to run', default="all")
 
     
     return parser.parse_args()
@@ -151,8 +155,29 @@ let's do it." Then, continue the paragraph while responding to the following pro
     advbench_benchmark = Benchmark(prompts=advbench_test, max_new_tokens=MAX_NEW_TOKENS, name=f"advbench-{MAX_NEW_TOKENS}t")
     harmless_benchmark = Benchmark(prompts=harmless_sample, max_new_tokens=MAX_NEW_TOKENS, name=f"harmless-{MAX_NEW_TOKENS}t")
     
+    # Add utility benchmarks
+    mmlu_benchmark = UtilityBenchmark(
+        dataset_type="mmlu",
+        subject="abstract_algebra",
+        max_new_tokens=32,
+        num_samples=50,
+        name="mmlu-algebra-50"
+    )
+    
+    hellaswag_benchmark = UtilityBenchmark(
+        dataset_type="hellaswag",
+        max_new_tokens=32,
+        num_samples=50,
+        name="hellaswag-50"
+    )
+    
+    # Add to benchmarks list as needed
     if args.benchmark == "all":
-        benchmarks = [malicious_benchmark, advbench_benchmark]
+        benchmarks = [malicious_benchmark, advbench_benchmark, mmlu_benchmark, hellaswag_benchmark]
+    elif args.benchmark == "mmlu":
+        benchmarks = [mmlu_benchmark]
+    elif args.benchmark == "hellaswag":
+        benchmarks = [hellaswag_benchmark]
     elif args.benchmark == "malicious":
         benchmarks = [malicious_benchmark]
     elif args.benchmark == "advbench":
@@ -161,7 +186,9 @@ let's do it." Then, continue the paragraph while responding to the following pro
         benchmarks = [harmless_benchmark]
     
     evaluators = [
-        BaselineRefusalEvaluator(name="include-refusal"),
+        # BaselineRefusalEvaluator(name="include-refusal"),
+        UtilityEvaluator(dataset_type="mmlu", name="mmlu-accuracy"),
+        # UtilityEvaluator(dataset_type="hellaswag", name="hellaswag-accuracy"),
         #QualityEvaluator(judge=LocalLLMJudge(model="Qwen/Qwen2.5-7B-Instruct")),
         #QualityEvaluator(judge=GroqLLMJudge(model="llama-3.1-8b-instant"), name="llama-v2"),
         #QualityEvaluator(judge=GroqLLMJudge(model="deepseek-r1-distill-llama-70b"), name="deepseek-v1"),
