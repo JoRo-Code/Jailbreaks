@@ -108,7 +108,9 @@ class BaseLLMJudge(ABC, BaseModel):
         if not prompts:
             return []
 
-        max_workers = min(len(prompts), 16) # groq has 1000 requests per minute, 3000 tokens per minute
+        max_workers = min(len(prompts), 8) 
+        # groq has rate limits for each model
+        # e.g. 1000 requests per minute, 300 000 tokens per minute
         with ThreadPoolExecutor(max_workers=max_workers) as pool:
             return list(pool.map(self._score_response_fn, prompts))
 
