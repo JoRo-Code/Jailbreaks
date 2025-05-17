@@ -8,3 +8,6 @@ class Benchmark:
     
     def get_prompts(self):
         return self.prompts
+    
+    def __str__(self):
+        return self.name
