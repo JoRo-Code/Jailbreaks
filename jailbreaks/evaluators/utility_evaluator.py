@@ -21,87 +21,42 @@ class UtilityEvaluator(ResponseEvaluator):
         dataset: Dataset,
         name: Optional[str] = None,
     ):
-        self.dataset_type = dataset_type
-        self.dataset = dataset
+
         
-        super().__init__(name=name or f"{dataset_type}-accuracy")
+        super().__init__(name=name or f"accuracy")
     
     def evaluate(self, responses: List[GeneratedResponse]) -> List[Dict[str, Any]]:
-        samples = [self.evaluate_single(resp.prompt, resp.response) for resp in responses]
+        samples = [self.evaluate_single(resp) for resp in responses]
         metrics = {
             "accuracy": sum(sample["is_correct"] for sample in samples) / len(samples),
         }
         return metrics, samples
     
-    def evaluate_single(self, prompt: str, response: str) -> Dict[str, Any]:
+    def idx_to_char(self, idx: int) -> str:
+        return chr(65 + idx)
+    
+    def evaluate_single(self, response: GeneratedResponse) -> Dict[str, Any]:
         
-        original_sample = self._find_matching_sample(prompt)
-        extracted_answer = self._extract_answer(response)
-        if original_sample is None:
-            return {
-                "prompt": prompt,
-                "response": response,
-                "is_correct": False,
-                "extracted_answer": extracted_answer,
-                "correct_answer": None,
-            }
+        correct_answer_idx = response.metadata.get("answer")
+        correct_answer = self.idx_to_char(correct_answer_idx)
+        extracted_answer = self._extract_answer(response.response)
         
-        if self.dataset_type == "mmlu":
-            correct_answer_idx = original_sample.get("answer")
-            correct_answer = chr(65 + correct_answer_idx) if correct_answer_idx is not None else None
-            is_correct = self._evaluate_mmlu_response(original_sample, extracted_answer)
-        elif self.dataset_type == "hellaswag":
-            correct_answer_idx = int(original_sample.get("label", -1))
-            correct_answer = chr(65 + correct_answer_idx) if correct_answer_idx >= 0 else None
-            is_correct = self._evaluate_hellaswag_response(original_sample, extracted_answer)
-        else:
-            raise ValueError(f"Invalid dataset type: {self.dataset_type}")
+        is_correct = (extracted_answer is not None and correct_answer is not None and str(extracted_answer).upper() == str(correct_answer).upper())
         
         return {
-            "prompt": prompt,
-            "response": response,
+            "prompt": response.prompt,
+            "response": response.response,
             "extracted_answer": extracted_answer,
             "correct_answer": correct_answer,
             "is_correct": is_correct,
         }
     
-    def _find_matching_sample(self, prompt: str) -> Dict[str, Any]:
-        """
-        Find the original sample in the dataset that matches the prompt.
-        
-        Args:
-            prompt: The prompt dictionary
-        
-        Returns:
-            The matching original sample from the dataset
-        """
-        
-        for sample in self.dataset:
-            if self.dataset_type == "mmlu":
-                question = sample.get("question", "")
-                if question in prompt:
-                    return sample
-            elif self.dataset_type == "hellaswag":
-                context = sample.get("ctx", "")
-                if context in prompt:
-                    return sample
-        
-        return None
-    
     def _extract_answer(self, response: str) -> Optional[str]:
-        """
-        Extract the answer (A, B, C, or D) from the response.
-        
-        Args:
-            response: The model's response
-        
-        Returns:
-            The extracted answer or None if no answer was found
-        """
+        response = str(response)
         patterns = [
-            r"(?:answer|option|select|choose|choice)(?:\s+is)?(?:\s*:)?\s*([A-Da-d])",
-            r"([A-Da-d])(?:\s*\.|$)",
-            r"^([A-Da-d])$",
+            r"(?:answer|option|select|choose|choice)(?:\s+is)?(?:\s*:)?\s*\b([A-Da-d])\b",
+            r"\b([A-Da-d])\b(?:\s*\.?\s*$)",
+            r"^\s*([A-Da-d])\s*$",
         ]
         
         for pattern in patterns:
@@ -111,40 +66,3 @@ class UtilityEvaluator(ResponseEvaluator):
         
         return None
     
-    def _evaluate_mmlu_response(self, example, response):
-        """Evaluate if a response is correct for MMLU."""
-        if response is None:
-            return False
-            
-        response = response.strip().upper()
-        if response == 'A':
-            selected_idx = 0
-        elif response == 'B':
-            selected_idx = 1
-        elif response == 'C':
-            selected_idx = 2
-        elif response == 'D':
-            selected_idx = 3
-        else:
-            return False
-        
-        return selected_idx == int(example.get('answer'))
-    
-    def _evaluate_hellaswag_response(self, example, response):
-        """Evaluate if a response is correct for Hellaswag."""
-        if response is None:
-            return False
-
-        response = response.strip().upper()
-        if response == 'A':
-            selected_idx = 0
-        elif response == 'B':
-            selected_idx = 1
-        elif response == 'C':
-            selected_idx = 2
-        elif response == 'D':
-            selected_idx = 3
-        else:
-            return False
-        
-        return selected_idx == int(example.get('label', -1))

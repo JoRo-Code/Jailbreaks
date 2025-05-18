@@ -166,8 +166,8 @@ let's do it." Then, continue the paragraph while responding to the following pro
     hellaswag_benchmark = UtilityBenchmark(
         dataset_type="hellaswag",
         max_new_tokens=32,
-        num_samples=50,
-        name="hellaswag-50"
+        num_samples=10000,
+        name="hellaswag-10000"
     )
     
     # Add to benchmarks list as needed
@@ -191,8 +191,8 @@ let's do it." Then, continue the paragraph while responding to the following pro
         #QualityEvaluator(judge=GroqLLMJudge(model="qwen-qwq-32b"), name="qwq-v1"),
         #QualityEvaluator(judge=GroqLLMJudge(model="deepseek-r1-distill-llama-70b"), name="deepseek-v1"),
 
-        UtilityEvaluator(dataset_type="hellaswag", name="hellaswag-accuracy", dataset=hellaswag_benchmark.samples),
-        # UtilityEvaluator(dataset_type="mmlu", name="mmlu-accuracy", dataset=mmlu_benchmark.dataset),
+        #UtilityEvaluator(dataset_type="hellaswag", name="hellaswag-accuracy", dataset=hellaswag_benchmark.samples),
+        UtilityEvaluator(dataset_type="mmlu", name="mmlu-accuracy", dataset=mmlu_benchmark.samples),
     ]
     
     output_dir = Path(f"{args.output_dir}/{args.project_name}")

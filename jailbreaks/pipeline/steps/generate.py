@@ -203,6 +203,8 @@ def _generate_responses_internal(config: GenerateConfig):
                             }
                             if prompts_metadata is not None:
                                 metadata.update({k: v for k, v in batch_prompts_metadata[i].items() if k != "prompt"})
+                            if prompts_metadata is not None and "answer" in batch_prompts_metadata[i]:
+                                metadata["answer"] = batch_prompts_metadata[i]["answer"]
 
                             gen_responses.append(GeneratedResponse(
                                 prompt=batch_prompts[i],
@@ -251,7 +253,7 @@ def _generate_responses_internal(config: GenerateConfig):
                     "model": [model_short_name for _ in responses],
                     "method_combo": [combo_name for _ in responses],
                     "gen_time": [resp.metadata["gen_time"] for resp in responses],
-                    
+                    "correct_answer": [resp.metadata.get("correct_answer", None) for resp in responses],
                 }
                 if prompts_metadata is not None:
                     response_data.update({k: [resp.metadata[k] for resp in responses] for k in prompts_metadata[0].keys() if k != "prompt"})
