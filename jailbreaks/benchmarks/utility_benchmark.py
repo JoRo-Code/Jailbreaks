@@ -48,6 +48,7 @@ class UtilityBenchmark(Benchmark):
         else:
             raise ValueError(f"Unknown dataset type: {dataset_type}")
         
+        self.dataset = ds
         # Get the prompts
         dataset = ds[split]
         
@@ -85,6 +86,9 @@ class UtilityBenchmark(Benchmark):
             max_new_tokens=max_new_tokens,
             name=name
         )
+    
+    def get_dataset(self):
+        return self.dataset
     
     def _create_mmlu_prompt(self, example):
         """Create a prompt from an MMLU example."""

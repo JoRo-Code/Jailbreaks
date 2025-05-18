@@ -155,7 +155,6 @@ let's do it." Then, continue the paragraph while responding to the following pro
     advbench_benchmark = Benchmark(prompts=advbench_test, max_new_tokens=MAX_NEW_TOKENS, name=f"advbench-{MAX_NEW_TOKENS}t")
     harmless_benchmark = Benchmark(prompts=harmless_sample, max_new_tokens=MAX_NEW_TOKENS, name=f"harmless-{MAX_NEW_TOKENS}t")
     
-    # Add utility benchmarks
     mmlu_benchmark = UtilityBenchmark(
         dataset_type="mmlu",
         subject="abstract_algebra",
@@ -187,12 +186,13 @@ let's do it." Then, continue the paragraph while responding to the following pro
     
     evaluators = [
         # BaselineRefusalEvaluator(name="include-refusal"),
-        UtilityEvaluator(dataset_type="mmlu", name="mmlu-accuracy"),
-        # UtilityEvaluator(dataset_type="hellaswag", name="hellaswag-accuracy"),
         #QualityEvaluator(judge=LocalLLMJudge(model="Qwen/Qwen2.5-7B-Instruct")),
         #QualityEvaluator(judge=GroqLLMJudge(model="llama-3.1-8b-instant"), name="llama-v2"),
-        #QualityEvaluator(judge=GroqLLMJudge(model="deepseek-r1-distill-llama-70b"), name="deepseek-v1"),
         #QualityEvaluator(judge=GroqLLMJudge(model="qwen-qwq-32b"), name="qwq-v1"),
+        #QualityEvaluator(judge=GroqLLMJudge(model="deepseek-r1-distill-llama-70b"), name="deepseek-v1"),
+
+        UtilityEvaluator(dataset_type="hellaswag", name="hellaswag-accuracy", dataset=hellaswag_benchmark.dataset),
+        # UtilityEvaluator(dataset_type="mmlu", name="mmlu-accuracy", dataset=mmlu_benchmark.dataset),
     ]
     
     output_dir = Path(f"{args.output_dir}/{args.project_name}")

@@ -1,6 +1,8 @@
 import logging
-from typing import Dict, Any, Optional, Literal, List
+from typing import Dict, Any, Optional, Literal, List, Tuple
 import re
+
+from datasets import Dataset
 
 from jailbreaks.pipeline.schemas import GeneratedResponse
 from jailbreaks.evaluators.base import ResponseEvaluator
@@ -13,57 +15,69 @@ class UtilityEvaluator(ResponseEvaluator):
     def __init__(
         self,
         dataset_type: Literal["mmlu", "hellaswag"],
+        dataset: Dataset,
         name: Optional[str] = None,
     ):
-        """
-        Initialize a utility evaluator.
-        
-        Args:
-            dataset_type: Type of dataset ("mmlu" or "hellaswag")
-            name: Name of the evaluator
-        """
         self.dataset_type = dataset_type
+        self.dataset = dataset
         
-        # Generate a name if not provided
-        if name is None:
-            name = f"{dataset_type}-accuracy"
-        
-        super().__init__(name=name)
+        super().__init__(name=name or f"{dataset_type}-accuracy")
     
-    def evaluate(self, responses: List[GeneratedResponse]) -> Dict[str, Any]:
-        return [self.evaluate_single(resp.prompt, resp.response) for resp in responses]
+    def evaluate(self, responses: List[GeneratedResponse]) -> List[Dict[str, Any]]:
+        samples = [self.evaluate_single(resp.prompt, resp.response) for resp in responses]
+        metrics = {
+            "accuracy": sum(sample["is_correct"] for sample in samples) / len(samples),
+        }
+        return metrics, samples
     
-    def evaluate_single(self, prompt: Dict[str, Any], response: str) -> Dict[str, Any]:
-        """
-        Evaluate a response to a utility prompt.
+    def evaluate_single(self, prompt: Dict[str, Any], response: str) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         
-        Args:
-            prompt: The prompt dictionary containing the original sample
-            response: The model's response
-        
-        Returns:
-            A dictionary with evaluation results
-        """
-        original_sample = prompt.get("original_sample", {})
-        
-        # Extract the answer from the response
+        original_sample = self._find_matching_sample(prompt)
         extracted_answer = self._extract_answer(response)
         
         if self.dataset_type == "mmlu":
             correct_answer_idx = original_sample.get("answer")
             correct_answer = chr(65 + correct_answer_idx) if correct_answer_idx is not None else None
             is_correct = self._evaluate_mmlu_response(original_sample, extracted_answer)
-        else:  # hellaswag
+        elif self.dataset_type == "hellaswag":
             correct_answer_idx = int(original_sample.get("label", -1))
             correct_answer = chr(65 + correct_answer_idx) if correct_answer_idx >= 0 else None
             is_correct = self._evaluate_hellaswag_response(original_sample, extracted_answer)
+        else:
+            raise ValueError(f"Invalid dataset type: {self.dataset_type}")
         
         return {
+            "prompt": prompt,
+            "response": response,
             "accuracy": 1.0 if is_correct else 0.0,
             "extracted_answer": extracted_answer,
             "correct_answer": correct_answer,
             "is_correct": is_correct,
         }
+    
+    def _find_matching_sample(self, prompt: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Find the original sample in the dataset that matches the prompt.
+        
+        Args:
+            prompt: The prompt dictionary
+        
+        Returns:
+            The matching original sample from the dataset
+        """
+        prompt_text = prompt.get("text", "")
+        
+        for sample in self.dataset:
+            if self.dataset_type == "mmlu":
+                question = sample.get("question", "")
+                if question in prompt_text:
+                    return sample
+            if self.dataset_type == "hellaswag":
+                context = sample.get("ctx", "")
+                if context in prompt_text:
+                    return sample
+        
+        return None
     
     def _extract_answer(self, response: str) -> Optional[str]:
         """
@@ -75,11 +89,10 @@ class UtilityEvaluator(ResponseEvaluator):
         Returns:
             The extracted answer or None if no answer was found
         """
-        # Look for patterns like "Answer: A" or "The answer is B" or just "C."
         patterns = [
-            r"(?:answer|option|select|choose|choice)(?:\s+is)?(?:\s*:)?\s*([A-Da-d])",  # Answer: A, The answer is B
-            r"([A-Da-d])(?:\s*\.|$)",  # A., B
-            r"^([A-Da-d])$",  # Just A, B, C, or D
+            r"(?:answer|option|select|choose|choice)(?:\s+is)?(?:\s*:)?\s*([A-Da-d])",
+            r"([A-Da-d])(?:\s*\.|$)",
+            r"^([A-Da-d])$",
         ]
         
         for pattern in patterns:
@@ -94,7 +107,6 @@ class UtilityEvaluator(ResponseEvaluator):
         if response is None:
             return False
             
-        # Convert model's letter response to index (A->0, B->1, etc.)
         response = response.strip().upper()
         if response == 'A':
             selected_idx = 0
@@ -105,17 +117,15 @@ class UtilityEvaluator(ResponseEvaluator):
         elif response == 'D':
             selected_idx = 3
         else:
-            return False  # Invalid response
+            return False
         
-        # Check if the selected index matches the answer
-        return selected_idx == example.get('answer')
+        return selected_idx == int(example.get('answer'))
     
     def _evaluate_hellaswag_response(self, example, response):
         """Evaluate if a response is correct for Hellaswag."""
         if response is None:
             return False
-            
-        # Convert model's letter response to index (A->0, B->1, etc.)
+
         response = response.strip().upper()
         if response == 'A':
             selected_idx = 0
@@ -126,6 +136,6 @@ class UtilityEvaluator(ResponseEvaluator):
         elif response == 'D':
             selected_idx = 3
         else:
-            return False  # Invalid response
+            return False
         
         return selected_idx == int(example.get('label', -1))
