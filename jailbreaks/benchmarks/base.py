@@ -11,3 +11,6 @@ class Benchmark:
     
     def __str__(self):
         return self.name
+    
+    def is_utility_benchmark(self):
+        return False

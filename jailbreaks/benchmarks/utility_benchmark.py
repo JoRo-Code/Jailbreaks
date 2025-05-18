@@ -48,7 +48,6 @@ class UtilityBenchmark(Benchmark):
         else:
             raise ValueError(f"Unknown dataset type: {dataset_type}")
         
-        self.dataset = ds
         # Get the prompts
         dataset = ds[split]
         
@@ -59,20 +58,26 @@ class UtilityBenchmark(Benchmark):
         else:
             samples = dataset
         
-        # Create prompts
+        self.samples = samples
+        
         prompts = []
+        prompt_metadata = []
         for sample in samples:
             if dataset_type == "mmlu":
                 prompt = self._create_mmlu_prompt(sample)
+                idx = sample.get("idx", None)
+                answer = sample.get("answer", None)
             else:  # hellaswag
                 prompt = self._create_hellaswag_prompt(sample)
-            
-            # Store the original sample for evaluation
-            prompt_dict = {
+                idx = sample.get("source_id", None)
+                answer = sample.get("label", None)
+        
+            prompts.append(prompt)
+            prompt_metadata.append({
                 "prompt": prompt,
-                "original_sample": sample,
-            }
-            prompts.append(prompt_dict)
+                "id": idx,
+                "answer": answer,
+            })
         
         # Generate a name if not provided
         if name is None:
@@ -86,6 +91,14 @@ class UtilityBenchmark(Benchmark):
             max_new_tokens=max_new_tokens,
             name=name
         )
+        
+        self.prompt_metadata = prompt_metadata
+    
+    def get_prompts_with_metadata(self):
+        return self.prompt_metadata
+    
+    def is_utility_benchmark(self):
+        return True
     
     def get_dataset(self):
         return self.dataset

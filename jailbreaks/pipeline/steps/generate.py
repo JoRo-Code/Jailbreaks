@@ -155,13 +155,22 @@ def _generate_responses_internal(config: GenerateConfig):
                 responses = []
                 generation_start = time.time()
                 
-                # Get prompts from benchmark
+
                 prompts = benchmark.get_prompts()
+                if hasattr(benchmark, "get_prompts_with_metadata"):
+                    prompts_metadata = benchmark.get_prompts_with_metadata()
+                else:
+                    prompts_metadata = None
+
+
 
                 batch_size = config.batch_size
                 for batch_idx, batch_start in enumerate(tqdm(range(0, len(prompts), batch_size), desc=f"{model_short_name}_{combo_name}")):
                     batch_end = min(batch_start + batch_size, len(prompts))
                     batch_prompts = prompts[batch_start:batch_end]
+                    
+                    if prompts_metadata is not None:
+                        batch_prompts_metadata = prompts_metadata[batch_start:batch_end]
                 
                     try:
                         batch_start_time = time.time()
@@ -182,15 +191,9 @@ def _generate_responses_internal(config: GenerateConfig):
                             'per_sample_time': per_sample_time
                         })
                         
-                        # Store generated response
-                        gen_responses = [GeneratedResponse(
-                            prompt=batch_prompts[i],
-                            raw_prompt=raw_prompts[i],
-                            response=batched_responses[i],
-                            model_id=model_path,
-                            method_combo=combo_name,
-                            gen_time=per_sample_time,
-                            metadata={
+                        gen_responses = []
+                        for i, response in enumerate(batched_responses):
+                            metadata = {
                                 "benchmark": benchmark_name,
                                 "prompt_index": i,
                                 "timestamp": time.time(),
@@ -198,7 +201,18 @@ def _generate_responses_internal(config: GenerateConfig):
                                 "batch_idx": batch_idx,
                                 "batch_size": len(batch_prompts)
                             }
-                        ) for i, _ in enumerate(batched_responses)]
+                            if prompts_metadata is not None:
+                                metadata.update({k: v for k, v in batch_prompts_metadata[i].items() if k != "prompt"})
+
+                            gen_responses.append(GeneratedResponse(
+                                prompt=batch_prompts[i],
+                                raw_prompt=raw_prompts[i],
+                                response=response,
+                                model_id=model_path,
+                                method_combo=combo_name,
+                                gen_time=per_sample_time,
+                                metadata=metadata
+                            ))
                         
                         responses.extend(gen_responses)
                     
@@ -230,15 +244,20 @@ def _generate_responses_internal(config: GenerateConfig):
                 })
                 
                 # Save responses
-                response_df = pd.DataFrame({
+                response_data = {
                     "prompt": [resp.prompt for resp in responses],
                     "raw_prompt": [resp.raw_prompt for resp in responses],
                     "response": [resp.response for resp in responses],
                     "model": [model_short_name for _ in responses],
                     "method_combo": [combo_name for _ in responses],
-                    "gen_time": [resp.metadata["gen_time"] for resp in responses]
-                })
+                    "gen_time": [resp.metadata["gen_time"] for resp in responses],
                     
+                }
+                if prompts_metadata is not None:
+                    response_data.update({k: [resp.metadata[k] for resp in responses] for k in prompts_metadata[0].keys() if k != "prompt"})
+                
+                response_df = pd.DataFrame(response_data)
+                
                 artifact_name = f"{benchmark_key}_{model_short_name}_{combo_key}_responses-{config.run_id}"
                 
                 # log table for visibility in wandb

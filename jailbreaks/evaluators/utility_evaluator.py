@@ -30,7 +30,7 @@ class UtilityEvaluator(ResponseEvaluator):
         }
         return metrics, samples
     
-    def evaluate_single(self, prompt: Dict[str, Any], response: str) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    def evaluate_single(self, prompt: str, response: str) -> Dict[str, Any]:
         
         original_sample = self._find_matching_sample(prompt)
         extracted_answer = self._extract_answer(response)
@@ -55,7 +55,7 @@ class UtilityEvaluator(ResponseEvaluator):
             "is_correct": is_correct,
         }
     
-    def _find_matching_sample(self, prompt: Dict[str, Any]) -> Dict[str, Any]:
+    def _find_matching_sample(self, prompt: str) -> Dict[str, Any]:
         """
         Find the original sample in the dataset that matches the prompt.
         
@@ -65,16 +65,15 @@ class UtilityEvaluator(ResponseEvaluator):
         Returns:
             The matching original sample from the dataset
         """
-        prompt_text = prompt.get("text", "")
         
         for sample in self.dataset:
             if self.dataset_type == "mmlu":
                 question = sample.get("question", "")
-                if question in prompt_text:
+                if question in prompt:
                     return sample
-            if self.dataset_type == "hellaswag":
+            elif self.dataset_type == "hellaswag":
                 context = sample.get("ctx", "")
-                if context in prompt_text:
+                if context in prompt:
                     return sample
         
         return None
