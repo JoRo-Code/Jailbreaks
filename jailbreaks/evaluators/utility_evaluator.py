@@ -9,6 +9,9 @@ from jailbreaks.evaluators.base import ResponseEvaluator
 
 logger = logging.getLogger(__name__)
 
+
+    
+
 class UtilityEvaluator(ResponseEvaluator):
     """Evaluator for utility tasks like MMLU or Hellaswag."""
     
@@ -34,6 +37,14 @@ class UtilityEvaluator(ResponseEvaluator):
         
         original_sample = self._find_matching_sample(prompt)
         extracted_answer = self._extract_answer(response)
+        if original_sample is None:
+            return {
+                "prompt": prompt,
+                "response": response,
+                "is_correct": False,
+                "extracted_answer": extracted_answer,
+                "correct_answer": None,
+            }
         
         if self.dataset_type == "mmlu":
             correct_answer_idx = original_sample.get("answer")
@@ -49,7 +60,6 @@ class UtilityEvaluator(ResponseEvaluator):
         return {
             "prompt": prompt,
             "response": response,
-            "accuracy": 1.0 if is_correct else 0.0,
             "extracted_answer": extracted_answer,
             "correct_answer": correct_answer,
             "is_correct": is_correct,

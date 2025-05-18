@@ -109,7 +109,7 @@ class UtilityBenchmark(Benchmark):
         prompt += "Options:\n"
         for i, choice in enumerate(example['choices']):
             prompt += f"{chr(65+i)}. {choice}\n"
-        prompt += "\nPlease select the correct answer (A, B, C, or D)."
+        prompt += "\nPlease select the correct answer (A, B, C, or D). Answer with a single letter."
         return prompt
     
     def _create_hellaswag_prompt(self, example):
