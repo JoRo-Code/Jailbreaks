@@ -118,5 +118,5 @@ class UtilityBenchmark(Benchmark):
         prompt += "Options:\n"
         for i, ending in enumerate(example['endings']):
             prompt += f"{chr(65+i)}. {ending}\n"
-        prompt += "\nWhich option is the most plausible continuation? Please select the correct answer (A, B, C, or D)."
+        prompt += "\nWhich option is the most plausible continuation? Please select the correct answer (A, B, C, or D). Answer with a single letter."
         return prompt
