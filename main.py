@@ -107,9 +107,6 @@ def main():
         "Qwen/Qwen2.5-7B-Instruct",
         "meta-llama/Llama-3.1-8B-Instruct",
     ]
-    model_paths = [
-        "Qwen/Qwen2.5-0.5B-Instruct",
-    ]
     
     top_p_params = {
         "top_p": [0.8, 0.9, 1.0],
@@ -131,18 +128,18 @@ let's do it." Then, continue the paragraph while responding to the following pro
     
     N = 32
     diff_in_means = DiffInMeans(harmful_prompts=advbench_train[:N], harmless_prompts=harmless_instructions[:N])
-    
+
     method_combinations = [
         # [prefix_injection_1],
         # [prefix_injection_2],
-        # [prefix_injection_3],#
-        # [hidden_layer_injection],#
-        # [diff_in_means],#
+        [prefix_injection_3],#
+        [hidden_layer_injection],#
+        [diff_in_means],#
         # [diff_in_means, prefix_injection_3],
         # #[diff_in_means, temp_exploit], # TODO: Fix sampling with hooked transformer
 
         # [top_p_exploit],
-        # [temp_exploit], #
+        [temp_exploit], #
         # [hidden_layer_injection, temp_exploit],
         # # [gcg],
         #[OutputAware(params=sampling_params, save=True)],
@@ -157,17 +154,17 @@ let's do it." Then, continue the paragraph while responding to the following pro
     
     mmlu_benchmark = UtilityBenchmark(
         dataset_type="mmlu",
-        subject="abstract_algebra",
+        subject="all",
         max_new_tokens=32,
-        num_samples=50,
-        name="mmlu-algebra-50"
+        num_samples=500,
+        name="mmlu-algebra-500"
     )
     
     hellaswag_benchmark = UtilityBenchmark(
         dataset_type="hellaswag",
         max_new_tokens=32,
-        num_samples=50,
-        name="hellaswag-50"
+        num_samples=500,
+        name="hellaswag-500"
     )
     
     # Add to benchmarks list as needed
