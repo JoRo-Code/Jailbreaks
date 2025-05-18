@@ -196,9 +196,11 @@ let's do it." Then, continue the paragraph while responding to the following pro
     responses_dir = output_dir / "responses"
     evaluations_dir = output_dir / f"evaluations/{args.eval_run_id}"
     aggregated_results_dir = output_dir / f"aggregated_results/{args.eval_run_id}"
-    log_dir = output_dir / "fitting_logs"
+
     if args.run_id is None:
         args.run_id = str(uuid.uuid4())[:8]
+    
+    log_dir = output_dir / f"fitting_logs_{args.run_id}"
     
     if args.download or args.mode == 'download':
         download(model_paths)
