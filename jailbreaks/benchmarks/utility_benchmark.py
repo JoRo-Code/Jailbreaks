@@ -109,7 +109,7 @@ class UtilityBenchmark(Benchmark):
         prompt += "Options:\n"
         for i, choice in enumerate(example['choices']):
             prompt += f"{chr(65+i)}. {choice}\n"
-        prompt += "\nPlease select the correct answer (A, B, C, or D). Answer with a single letter."
+        prompt += "\nChoose the correct option and respond with only the letter (A, B, C, or D). No explanation. Just one letter."
         return prompt
     
     def _create_hellaswag_prompt(self, example):
@@ -118,5 +118,5 @@ class UtilityBenchmark(Benchmark):
         prompt += "Options:\n"
         for i, ending in enumerate(example['endings']):
             prompt += f"{chr(65+i)}. {ending}\n"
-        prompt += "\nWhich option is the most plausible continuation? Please select the correct answer (A, B, C, or D). Answer with a single letter."
+        prompt += "\nWhich option is the most plausible continuation? Choose the correct option and respond with only the letter (A, B, C, or D). No explanation. Just one letter."
         return prompt
