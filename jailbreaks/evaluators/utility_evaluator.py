@@ -17,8 +17,6 @@ class UtilityEvaluator(ResponseEvaluator):
     
     def __init__(
         self,
-        dataset_type: Literal["mmlu", "hellaswag"],
-        dataset: Dataset,
         name: Optional[str] = None,
     ):
 

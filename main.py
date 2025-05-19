@@ -189,7 +189,7 @@ let's do it." Then, continue the paragraph while responding to the following pro
         #QualityEvaluator(judge=GroqLLMJudge(model="deepseek-r1-distill-llama-70b"), name="deepseek-v1"),
 
         #UtilityEvaluator(dataset_type="hellaswag", name="hellaswag-accuracy", dataset=hellaswag_benchmark.samples),
-        UtilityEvaluator(dataset_type="mmlu", name="mmlu-accuracy", dataset=mmlu_benchmark.samples),
+        UtilityEvaluator(name="utility-accuracy"),
     ]
     
     output_dir = Path(f"{args.output_dir}/{args.project_name}")
