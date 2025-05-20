@@ -194,6 +194,7 @@ def response_parser(file_path: Path, context: dict) -> list[GeneratedResponse]:
             metadata={
                 "benchmark": context["benchmark"],
                 "timestamp": time.time(),
+                "answer": row.get('answer', None),
             }
         )
         responses.append(gen_response)

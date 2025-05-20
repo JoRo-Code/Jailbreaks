@@ -17,8 +17,8 @@ class GeneratedResponse:
     
     def to_dict(self):
         return asdict(self)
-
-
+    
+    
 @dataclass
 class EvaluationResult:
     """Structure to hold evaluation results"""

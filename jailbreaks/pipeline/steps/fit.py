@@ -18,7 +18,8 @@ class FitConfig:
     refit: bool = True
 
 def fit(config: FitConfig):
-    run_name = f"fit_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    date = datetime.now().strftime('%Y%m%d_%H%M%S')
+    run_name = f"fit_{date}"
     wandb.init(project=config.project_name, name=run_name, id=run_name)
     logger.info("Step 1: Fitting methods")
     
@@ -52,11 +53,11 @@ def fit(config: FitConfig):
         fit_times_for_wandb = {}
         for (model_path, method_name), t in fit_times.items():
             fit_times_for_wandb.setdefault(model_path, {})[method_name] = t
-        wandb.log({"fit_times": fit_times_for_wandb})
+        wandb.log({f"fit_times_{date}": fit_times_for_wandb})
     except Exception as e:
         logger.error(f"Error logging fit times: {str(e)}")
     logger.info(f"Step 1: Fitting methods complete. Total time taken: {sum(fit_times.values())} seconds")
-    csv_path = os.path.join(config.log_dir, "fit_times.csv")
+    csv_path = os.path.join(config.log_dir, f"fit_times_{date}.csv")
     os.makedirs(config.log_dir, exist_ok=True)
     with open(csv_path, "w") as f:
         f.write("model_path,method_name,time\n")
