@@ -6,10 +6,12 @@ from dataclasses import dataclass
 from typing import List
 import uuid
 from contextlib import suppress
+import gc
 
 import pandas as pd
 import wandb
 from tqdm import tqdm
+import torch
 
 from jailbreaks.llm import LLM
 from jailbreaks.pipeline.schemas import (
@@ -93,7 +95,14 @@ def _generate_responses_internal(config: GenerateConfig):
                         'total_time': 0,
                         'avg_gen_time': 0,
                         'num_samples': 0,
-                        'batch_times': []
+                        'batch_times': [],
+                        'initial_cuda_memory_gb': 0,
+                        'post_load_cuda_memory_gb': 0,
+                        'final_cuda_memory_gb': 0,
+                        'peak_cuda_memory_gb': 0,
+                        'post_clear_cuda_memory_gb': 0,
+                        'memory_increase_gb': 0,
+                        'memory_cleaned_gb': 0
                     }
     
 
@@ -130,6 +139,53 @@ def _generate_responses_internal(config: GenerateConfig):
     registry_df = _load_registry()
     new_rows = [] 
 
+    def _save_memory_checkpoint():
+        """Save current memory metrics as checkpoint"""
+        memory_rows = []
+        for benchmark_key, models in method_model_times.items():
+            for model_name, methods in models.items():
+                for method_name, metrics in methods.items():
+                    if metrics['num_samples'] > 0:  # Only save if we have data
+                        memory_rows.append({
+                            "benchmark": benchmark_key,
+                            "model": model_name,
+                            "method_combo": method_name,
+                            "num_samples": metrics['num_samples'],
+                            "total_gen_time": metrics['total_time'],
+                            "avg_gen_time": metrics['avg_gen_time'],
+                            "initial_cuda_memory_gb": metrics['initial_cuda_memory_gb'],
+                            "initial_cuda_reserved_gb": metrics.get('initial_cuda_reserved_gb', 0),
+                            "post_load_cuda_memory_gb": metrics['post_load_cuda_memory_gb'],
+                            "post_load_cuda_reserved_gb": metrics.get('post_load_cuda_reserved_gb', 0),
+                            "final_cuda_memory_gb": metrics['final_cuda_memory_gb'],
+                            "final_cuda_reserved_gb": metrics.get('final_cuda_reserved_gb', 0),
+                            "peak_cuda_memory_gb": metrics['peak_cuda_memory_gb'],
+                            "post_clear_cuda_memory_gb": metrics.get('post_clear_cuda_memory_gb', 0),
+                            "post_clear_cuda_reserved_gb": metrics.get('post_clear_cuda_reserved_gb', 0),
+                            "memory_increase_gb": metrics.get('memory_increase_gb', 0),
+                            "reserved_increase_gb": metrics.get('reserved_increase_gb', 0),
+                            "memory_cleaned_gb": metrics.get('memory_cleaned_gb', 0),
+                            "reserved_cleaned_gb": metrics.get('reserved_cleaned_gb', 0)
+                        })
+        
+        if memory_rows:
+            memory_df = pd.DataFrame(memory_rows)
+            
+            # Save checkpoint locally
+            checkpoint_path = config.output_dir / f"memory_metrics_checkpoint-{config.run_id}.csv"
+            checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+            memory_df.to_csv(checkpoint_path, index=False)
+            
+            # Create checkpoint artifact
+            checkpoint_artifact = wandb.Artifact(
+                name=f"memory_metrics_checkpoint-{config.run_id}", 
+                type="memory_checkpoint"
+            )
+            checkpoint_artifact.add_file(checkpoint_path, name="memory_metrics_checkpoint.csv")
+            wandb.log_artifact(checkpoint_artifact)
+            
+            logger.info(f"Memory checkpoint saved with {len(memory_rows)} entries")
+
     for benchmark in config.benchmarks:
         benchmark_name = benchmark.__str__()
         benchmark_key = benchmark_name.lower().replace(" ", "_")
@@ -140,8 +196,9 @@ def _generate_responses_internal(config: GenerateConfig):
         for model_path in config.model_paths:
             model_short_name = model_path.split("/")[-1]
             logger.info(f"  Using model: {model_short_name}")
-            
+
             for method_combo in config.method_combinations:
+
                 if not method_combo:
                     combo_name = "baseline"
                 else:
@@ -150,18 +207,36 @@ def _generate_responses_internal(config: GenerateConfig):
                 combo_key = combo_name.lower().replace(" ", "_")
                 logger.info(f"    Generating with method combo: {combo_name}")
                 
+                # Clear CUDA cache before loading new model/method combo
+                _clear_cuda_cache()
+                initial_memory = _get_cuda_memory_info()
+                logger.info(f"Initial CUDA memory: {initial_memory['cuda_allocated_gb']:.2f}GB allocated, {initial_memory['cuda_reserved_gb']:.2f}GB reserved")
+                
                 jailbreak_model = LLM(model_path, method_combo)
+                
+                # Track memory after model loading
+                post_load_memory = _get_cuda_memory_info()
+                logger.info(f"Post-load CUDA memory: {post_load_memory['cuda_allocated_gb']:.2f}GB allocated, {post_load_memory['cuda_reserved_gb']:.2f}GB reserved")
                 
                 responses = []
                 generation_start = time.time()
                 
-                # Get prompts from benchmark
+                # Reset max memory counter for this generation
+                torch.cuda.reset_peak_memory_stats()
+
                 prompts = benchmark.get_prompts()
+                if hasattr(benchmark, "get_prompts_with_metadata"):
+                    prompts_metadata = benchmark.get_prompts_with_metadata()
+                else:
+                    prompts_metadata = None
 
                 batch_size = config.batch_size
                 for batch_idx, batch_start in enumerate(tqdm(range(0, len(prompts), batch_size), desc=f"{model_short_name}_{combo_name}")):
                     batch_end = min(batch_start + batch_size, len(prompts))
                     batch_prompts = prompts[batch_start:batch_end]
+                    
+                    if prompts_metadata is not None:
+                        batch_prompts_metadata = prompts_metadata[batch_start:batch_end]
                 
                     try:
                         batch_start_time = time.time()
@@ -182,15 +257,9 @@ def _generate_responses_internal(config: GenerateConfig):
                             'per_sample_time': per_sample_time
                         })
                         
-                        # Store generated response
-                        gen_responses = [GeneratedResponse(
-                            prompt=batch_prompts[i],
-                            raw_prompt=raw_prompts[i],
-                            response=batched_responses[i],
-                            model_id=model_path,
-                            method_combo=combo_name,
-                            gen_time=per_sample_time,
-                            metadata={
+                        gen_responses = []
+                        for i, response in enumerate(batched_responses):
+                            metadata = {
                                 "benchmark": benchmark_name,
                                 "prompt_index": i,
                                 "timestamp": time.time(),
@@ -198,7 +267,20 @@ def _generate_responses_internal(config: GenerateConfig):
                                 "batch_idx": batch_idx,
                                 "batch_size": len(batch_prompts)
                             }
-                        ) for i, _ in enumerate(batched_responses)]
+                            if prompts_metadata is not None:
+                                metadata.update({k: v for k, v in batch_prompts_metadata[i].items() if k != "prompt"})
+                            if prompts_metadata is not None and "answer" in batch_prompts_metadata[i]:
+                                metadata["answer"] = batch_prompts_metadata[i]["answer"]
+
+                            gen_responses.append(GeneratedResponse(
+                                prompt=batch_prompts[i],
+                                raw_prompt=raw_prompts[i],
+                                response=response,
+                                model_id=model_path,
+                                method_combo=combo_name,
+                                gen_time=per_sample_time,
+                                metadata=metadata
+                            ))
                         
                         responses.extend(gen_responses)
                     
@@ -211,34 +293,71 @@ def _generate_responses_internal(config: GenerateConfig):
                 num_samples = len(responses)
                 avg_gen_time = total_generation_time / max(num_samples, 1)
                 
+                # Get final memory stats
+                final_memory = _get_cuda_memory_info()
+                peak_memory = torch.cuda.max_memory_allocated() / 1024**3 if torch.cuda.is_available() else 0
+                
                 method_model_times[benchmark_key][model_short_name][combo_name].update({
                     'total_time': total_generation_time,
                     'avg_gen_time': avg_gen_time,
-                    'num_samples': num_samples
+                    'num_samples': num_samples,
+                    'initial_cuda_memory_gb': initial_memory['cuda_allocated_gb'],
+                    'initial_cuda_reserved_gb': initial_memory['cuda_reserved_gb'],
+                    'post_load_cuda_memory_gb': post_load_memory['cuda_allocated_gb'],
+                    'post_load_cuda_reserved_gb': post_load_memory['cuda_reserved_gb'],
+                    'final_cuda_memory_gb': final_memory['cuda_allocated_gb'],
+                    'final_cuda_reserved_gb': final_memory['cuda_reserved_gb'],
+                    'peak_cuda_memory_gb': peak_memory
                 })
                 
+                # Clear model cache and CUDA memory
                 jailbreak_model.clear_cache()
+                _clear_cuda_cache()
                 
-                # Log generation metrics
-                wandb.log({
+                # Verify memory was cleared
+                post_clear_memory = _get_cuda_memory_info()
+                logger.info(f"Post-clear CUDA memory: {post_clear_memory['cuda_allocated_gb']:.2f}GB allocated, {post_clear_memory['cuda_reserved_gb']:.2f}GB reserved")
+                
+                # Log generation metrics with memory usage
+                memory_metrics = {
                     "benchmark": benchmark_name,
                     "model": model_short_name,
                     "method_combo": combo_name,
                     "num_responses": len(responses),
                     "generation_time": total_generation_time,
-                    "avg_generation_time": avg_gen_time
-                })
+                    "avg_generation_time": avg_gen_time,
+                    "initial_cuda_memory_gb": initial_memory['cuda_allocated_gb'],
+                    "initial_cuda_reserved_gb": initial_memory['cuda_reserved_gb'],
+                    "post_load_cuda_memory_gb": post_load_memory['cuda_allocated_gb'],
+                    "post_load_cuda_reserved_gb": post_load_memory['cuda_reserved_gb'],
+                    "final_cuda_memory_gb": final_memory['cuda_allocated_gb'],
+                    "final_cuda_reserved_gb": final_memory['cuda_reserved_gb'],
+                    "peak_cuda_memory_gb": peak_memory,
+                    "post_clear_cuda_memory_gb": post_clear_memory['cuda_allocated_gb'],
+                    "post_clear_cuda_reserved_gb": post_clear_memory['cuda_reserved_gb'],
+                    "memory_increase_gb": post_load_memory['cuda_allocated_gb'] - initial_memory['cuda_allocated_gb'],
+                    "reserved_increase_gb": post_load_memory['cuda_reserved_gb'] - initial_memory['cuda_reserved_gb'],
+                    "memory_cleaned_gb": final_memory['cuda_allocated_gb'] - post_clear_memory['cuda_allocated_gb'],
+                    "reserved_cleaned_gb": final_memory['cuda_reserved_gb'] - post_clear_memory['cuda_reserved_gb']
+                }
+                
+                wandb.log(memory_metrics)
                 
                 # Save responses
-                response_df = pd.DataFrame({
+                response_data = {
                     "prompt": [resp.prompt for resp in responses],
                     "raw_prompt": [resp.raw_prompt for resp in responses],
                     "response": [resp.response for resp in responses],
                     "model": [model_short_name for _ in responses],
                     "method_combo": [combo_name for _ in responses],
-                    "gen_time": [resp.metadata["gen_time"] for resp in responses]
-                })
-                    
+                    "gen_time": [resp.metadata["gen_time"] for resp in responses],
+                    "correct_answer": [resp.metadata.get("correct_answer", None) for resp in responses],
+                }
+                if prompts_metadata is not None:
+                    response_data.update({k: [resp.metadata[k] for resp in responses] for k in prompts_metadata[0].keys() if k != "prompt"})
+                
+                response_df = pd.DataFrame(response_data)
+                
                 artifact_name = f"{benchmark_key}_{model_short_name}_{combo_key}_responses-{config.run_id}"
                 
                 # log table for visibility in wandb
@@ -271,6 +390,10 @@ def _generate_responses_internal(config: GenerateConfig):
                 else:
                     next_gen_no = 1
 
+                # After completing each method combo, save checkpoint
+                _save_memory_checkpoint()
+                
+                # Also update new_rows incrementally
                 new_rows.append({
                     "run_name"      : wandb.run.name,
                     "run_id"        : config.run_id,
@@ -281,6 +404,12 @@ def _generate_responses_internal(config: GenerateConfig):
                     "num_responses" : num_samples,
                     "total_gen_time": total_generation_time
                 })
+                
+                # Save incremental registry update
+                if new_rows:
+                    temp_df = pd.concat([registry_df, pd.DataFrame(new_rows)], ignore_index=True)
+                    checkpoint_reg_path = config.output_dir / f"registry_checkpoint-{config.run_id}.csv"
+                    temp_df.to_csv(checkpoint_reg_path, index=False)
     
     if new_rows:
         # merge the old registry with the freshly-generated rows
@@ -338,4 +467,28 @@ def _generate_responses_internal(config: GenerateConfig):
             "generation_registry": wandb.Table(dataframe=registry_df),
             "generation_summary" : wandb.Table(dataframe=summary_df)
         })
+    
+def _get_cuda_memory_info():
+    """Get current CUDA memory usage information"""
+    if torch.cuda.is_available():
+        allocated = torch.cuda.memory_allocated() / 1024**3  # GB
+        reserved = torch.cuda.memory_reserved() / 1024**3    # GB
+        max_allocated = torch.cuda.max_memory_allocated() / 1024**3  # GB
+        return {
+            "cuda_allocated_gb": allocated,
+            "cuda_reserved_gb": reserved,
+            "cuda_max_allocated_gb": max_allocated
+        }
+    return {
+        "cuda_allocated_gb": 0,
+        "cuda_reserved_gb": 0,
+        "cuda_max_allocated_gb": 0
+    }
+
+def _clear_cuda_cache():
+    """Comprehensive CUDA cache clearing"""
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        torch.cuda.synchronize()
+    gc.collect()
     
