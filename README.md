@@ -153,8 +153,9 @@ The main configuration happens in `main.py`. Key settings include:
 # Run the same experiment 5 times for statistical significance
 seq 5 | xargs -n1 -I{} uv run main.py --mode generate --project-name my_experiment
 
-# Auto-shutdown Lambda instances after completion (if using AWS Lambda)
-seq 5 | xargs -n1 -I{} uv run main.py --mode generate --project-name my_experiment; uv run lambda.py
+# Auto-shutdown Lambda instances after completion (if using https://cloud.lambda.ai/)
+seq 5 | xargs -n1 -I{} uv run main.py --mode generate --project-name my_experiment; 
+uv run lambda.py
 ```
 
 ## 🛠️ Extending the Pipeline
