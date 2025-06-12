@@ -55,7 +55,7 @@ def get_args():
     parser.add_argument('--project-name', type=str, help='Project name', default="jailbreak-research")
     parser.add_argument('--run-id', type=str, help='Run ID to continue an existing run')
     parser.add_argument('--log-level', type=str, help='Log level', default="INFO")  
-    parser.add_argument('--no-refit', dest='refit', action='store_false', default=True, help='Do not refit methods')
+    parser.add_argument('--refit', dest='refit', action='store_true', default=False, help='Refit methods')
     parser.add_argument('--download', dest='download', action='store_true', default=False, help='Download models')
     parser.add_argument('--eval-run-id', type=str, help='Run ID to aggregate', default=None)
     parser.add_argument('--use-local', dest='use_local', action='store_true', default=False, help='Use local evaluations')
@@ -152,28 +152,28 @@ let's do it." Then, continue the paragraph while responding to the following pro
     advbench_benchmark = Benchmark(prompts=advbench_test, max_new_tokens=MAX_NEW_TOKENS, name=f"advbench-{MAX_NEW_TOKENS}t")
     harmless_benchmark = Benchmark(prompts=harmless_sample, max_new_tokens=MAX_NEW_TOKENS, name=f"harmless-{MAX_NEW_TOKENS}t")
     
-    mmlu_benchmark = UtilityBenchmark(
-        dataset_type="mmlu",
-        subject="all",
-        max_new_tokens=32,
-        num_samples=500,
-        name="mmlu-algebra-500"
-    )
+    # mmlu_benchmark = UtilityBenchmark(
+    #     dataset_type="mmlu",
+    #     subject="all",
+    #     max_new_tokens=32,
+    #     num_samples=500,
+    #     name="mmlu-algebra-500"
+    # )
     
-    hellaswag_benchmark = UtilityBenchmark(
-        dataset_type="hellaswag",
-        max_new_tokens=32,
-        num_samples=500,
-        name="hellaswag-500"
-    )
+    # hellaswag_benchmark = UtilityBenchmark(
+    #     dataset_type="hellaswag",
+    #     max_new_tokens=32,
+    #     num_samples=500,
+    #     name="hellaswag-500"
+    # )
     
     # Add to benchmarks list as needed
     if args.benchmark == "all":
-        benchmarks = [malicious_benchmark, advbench_benchmark, mmlu_benchmark, hellaswag_benchmark]
-    elif args.benchmark == "mmlu":
-        benchmarks = [mmlu_benchmark]
-    elif args.benchmark == "hellaswag":
-        benchmarks = [hellaswag_benchmark]
+        benchmarks = [malicious_benchmark, advbench_benchmark, harmless_benchmark]
+    # elif args.benchmark == "mmlu":
+    #     benchmarks = [mmlu_benchmark]
+    # elif args.benchmark == "hellaswag":
+    #     benchmarks = [hellaswag_benchmark]
     elif args.benchmark == "malicious":
         benchmarks = [malicious_benchmark]
     elif args.benchmark == "advbench":
