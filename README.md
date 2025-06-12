@@ -91,10 +91,11 @@ Test the jailbreaking methods against your chosen datasets:
 ```bash
 # Basic generation
 uv run main.py --mode generate --project-name my_experiment --benchmark advbench
+```
 
 **Available Benchmarks**:
-- `advbench`: Standard adversarial benchmark
-- `malicious`: Malicious instruction dataset
+- `advbench`
+- `malicious`
 
 **Where Results Go**:
 - Local files: `results/` directory
