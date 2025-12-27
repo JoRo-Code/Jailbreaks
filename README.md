@@ -2,6 +2,26 @@
 
 A comprehensive toolkit for evaluating jailbreaking methods on large language models (LLMs). This pipeline allows researchers to systematically test how various jailbreaking techniques affect model safety, utility, and computational efficiency.
 
+## 📄 Paper
+
+**Paper**: [IEEE ICMLA Proceedings](https://conferences.computer.org/icmlapub25/pdfs/ICMLA2025-4ubXnJyWd3Fugefo3XYLVQ/598000b116/598000b116.pdf)
+
+*Access credentials: username: `icmlapub25`, password: `conf25//`*
+
+### Citation
+
+If you use this work in your research, please cite:
+
+```bibtex
+@inproceedings{rosengren2025jailbreaking,
+  title={Jailbreaking Large Language Models: Safety Alignment, Response Quality, Computational Cost},
+  author={Rosengren, Jonas and Brynielsson, Joel and Johansson, Fredrik and Jonell, Patrik},
+  booktitle={2025 IEEE International Conference on Machine Learning and Applications (ICMLA)},
+  year={2025},
+  organization={IEEE}
+}
+```
+
 ## 🎯 What This Does
 
 This pipeline helps you:
